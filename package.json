@@ -1,0 +1,13 @@
+{
+  "name": "lampa-qbit-downloader",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "bridge": "node qbit-bridge.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
