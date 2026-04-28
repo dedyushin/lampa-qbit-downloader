@@ -25,7 +25,19 @@ QBIT_USERNAME=admin
 QBIT_PASSWORD=***
 BRIDGE_TOKEN=длинный-случайный-токен
 QBIT_SAVE_PATH=/Volumes/Media/Downloads/qBittorrent
+QBIT_CATEGORY=lampa
+QBIT_MOVIES_PATH=/Volumes/Media/FILMS
+QBIT_TV_PATH="/Volumes/Media/TV SHOWS"
+QBIT_MOVIES_CATEGORY=films
+QBIT_TV_CATEGORY=tv-shows
 ```
+
+Если Lampa передаёт тип карточки, bridge переопределяет общий `QBIT_SAVE_PATH`:
+
+- фильм → `/Volumes/Media/FILMS`, категория `films`;
+- сериал → `/Volumes/Media/TV SHOWS`, категория `tv-shows`.
+
+Если тип не удалось определить, bridge использует общий `QBIT_SAVE_PATH`.
 
 Запуск вручную:
 
@@ -90,7 +102,7 @@ http://IP_ВАШЕГО_MAC_MINI:8790/lampa-qbit-download.js
 - `Режим подключения`: лучше оставить `Bridge на Mac mini`.
 - `Bridge URL`: `http://IP_ВАШЕГО_MAC_MINI:8787`.
 - `Bridge токен`: тот же `BRIDGE_TOKEN`, если он задан в `.env`.
-- `Категория`, `Теги`, `Путь сохранения`: можно оставить пустыми, тогда bridge возьмёт значения из `.env`.
+- `Категория`, `Теги`, `Путь сохранения`: обычно можно оставить пустыми. Если плагин понял тип карточки, bridge сам направит фильм в `/Volumes/Media/FILMS`, сериал в `/Volumes/Media/TV SHOWS`, и поставит категорию `films` или `tv-shows`.
 
 ## Как пользоваться
 

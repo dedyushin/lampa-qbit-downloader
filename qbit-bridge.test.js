@@ -2,6 +2,9 @@
 
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const http = require('node:http');
 const { test } = require('node:test');
 
@@ -140,6 +143,85 @@ test('bridge protects add endpoint with token and forwards torrent to qBittorren
   } finally {
     await bridge.stop();
     await close(qbit.server);
+  }
+});
+
+test('bridge routes movie and tv content to Plex library folders', async () => {
+  const qbit = await startMockQbit();
+  const bridge = await startBridge({
+    QBIT_URL: `http://127.0.0.1:${qbit.port}`,
+    QBIT_USERNAME: 'admin',
+    QBIT_PASSWORD: 'secret',
+    QBIT_MOVIES_PATH: '/Volumes/Media/FILMS',
+    QBIT_TV_PATH: '/Volumes/Media/TV SHOWS',
+    QBIT_MOVIES_CATEGORY: 'films',
+    QBIT_TV_CATEGORY: 'tv-shows',
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const movie = await fetch(`http://127.0.0.1:${bridge.port}/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({ link: 'magnet:?xt=urn:btih:movie', contentType: 'movie', category: 'lampa' })
+    });
+    assert.equal(movie.status, 200);
+
+    const tv = await fetch(`http://127.0.0.1:${bridge.port}/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({ link: 'magnet:?xt=urn:btih:tv', contentType: 'tv' })
+    });
+    assert.equal(tv.status, 200);
+
+    const addCalls = qbit.calls.filter((call) => call.path === '/api/v2/torrents/add');
+    assert.equal(addCalls.length, 2);
+    assert.match(addCalls[0].body, /savepath=%2FVolumes%2FMedia%2FFILMS/);
+    assert.match(addCalls[0].body, /category=films/);
+    assert.match(addCalls[1].body, /savepath=%2FVolumes%2FMedia%2FTV\+SHOWS/);
+    assert.match(addCalls[1].body, /category=tv-shows/);
+  } finally {
+    await bridge.stop();
+    await close(qbit.server);
+  }
+});
+
+test('bridge routes movie and tv content to Plex library folders in qBittorrent CLI mode', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-qbit-cli-'));
+  const argsFile = path.join(tempDir, 'args.jsonl');
+  const fakeQbit = path.join(tempDir, 'qbittorrent-fake.js');
+  fs.writeFileSync(fakeQbit, `#!/usr/bin/env node\nconst fs = require('node:fs');\nfs.appendFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n`);
+  fs.chmodSync(fakeQbit, 0o755);
+
+  const bridge = await startBridge({
+    QBIT_ADD_MODE: 'cli',
+    QBIT_BINARY: fakeQbit,
+    QBIT_MOVIES_PATH: '/Volumes/Media/FILMS',
+    QBIT_TV_PATH: '/Volumes/Media/TV SHOWS',
+    QBIT_MOVIES_CATEGORY: 'films',
+    QBIT_TV_CATEGORY: 'tv-shows',
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${bridge.port}/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({ link: 'magnet:?xt=urn:btih:tvcli', contentType: 'series' })
+    });
+    assert.equal(response.status, 200);
+
+    const calls = fs.readFileSync(argsFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0], [
+      '--skip-dialog=true',
+      '--save-path=/Volumes/Media/TV SHOWS',
+      '--category=tv-shows',
+      'magnet:?xt=urn:btih:tvcli'
+    ]);
+  } finally {
+    await bridge.stop();
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
 

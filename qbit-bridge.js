@@ -12,6 +12,10 @@ const config = {
   password: env.QBIT_PASSWORD || '',
   savePath: env.QBIT_SAVE_PATH || '',
   category: env.QBIT_CATEGORY || '',
+  moviesPath: env.QBIT_MOVIES_PATH || '/Volumes/Media/FILMS',
+  tvPath: env.QBIT_TV_PATH || '/Volumes/Media/TV SHOWS',
+  moviesCategory: env.QBIT_MOVIES_CATEGORY || 'films',
+  tvCategory: env.QBIT_TV_CATEGORY || 'tv-shows',
   tags: env.QBIT_TAGS || '',
   sequential: env.QBIT_SEQUENTIAL === 'true',
   firstLastPiece: env.QBIT_FIRST_LAST_PIECE === 'true',
@@ -88,6 +92,30 @@ function validateTorrentLink(link) {
   throw new Error('Unsupported torrent link. Expected magnet, http or https URL');
 }
 
+function routedContentType(payload) {
+  const raw = String(payload.contentType || payload.mediaType || payload.type || '').toLowerCase();
+  if (/^(movie|film|films|movies|фильм|кино)$/.test(raw)) return 'movie';
+  if (/^(tv|show|series|serial|episode|episodes|сериал|сериалы)$/.test(raw)) return 'tv';
+  return '';
+}
+
+function routedSavePath(payload) {
+  if (payload.savePath) return payload.savePath;
+  const type = routedContentType(payload);
+  if (type === 'movie') return config.moviesPath;
+  if (type === 'tv') return config.tvPath;
+  return config.savePath;
+}
+
+function routedCategory(payload) {
+  const type = routedContentType(payload);
+  const category = String(payload.category || '').trim();
+  if (category && !(type && category === 'lampa')) return category;
+  if (type === 'movie') return config.moviesCategory;
+  if (type === 'tv') return config.tvCategory;
+  return config.category;
+}
+
 async function qbitLogin() {
   if (!config.username && !config.password) return '';
 
@@ -116,8 +144,8 @@ async function qbitLogin() {
 
 function qbitAddCli(payload) {
   const link = validateTorrentLink(payload.link || payload.url || payload.magnet);
-  const savePath = payload.savePath || config.savePath;
-  const category = payload.category || config.category;
+  const savePath = routedSavePath(payload);
+  const category = routedCategory(payload);
   const sequential = payload.sequential;
   const firstLastPiece = payload.firstLastPiece;
 
@@ -148,8 +176,8 @@ async function qbitAddWebUi(payload, retry) {
   form.set('urls', link);
   form.set('paused', 'false');
 
-  const savePath = payload.savePath || config.savePath;
-  const category = payload.category || config.category;
+  const savePath = routedSavePath(payload);
+  const category = routedCategory(payload);
   const tags = payload.tags || config.tags;
   const sequential = payload.sequential;
   const firstLastPiece = payload.firstLastPiece;

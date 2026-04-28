@@ -37,6 +37,36 @@
     return element && (element.MagnetUri || element.Link || element.link || element.url || element.magnet);
   }
 
+  function asLower(value) {
+    return String(value || '').toLowerCase();
+  }
+
+  function contentTypeFromObject(object) {
+    if (!object || typeof object !== 'object') return '';
+
+    var direct = asLower(object.contentType || object.mediaType || object.media_type || object.type || object.Type || object.category || object.Category);
+    if (/movie|film|фильм|кино/.test(direct)) return 'movie';
+    if (/tv|show|series|serial|episode|сериал|эпизод/.test(direct)) return 'tv';
+
+    if (object.number_of_seasons || object.number_of_episodes || object.season || object.episode || object.Episode || object.Season) return 'tv';
+    if (object.original_title || object.release_date || object.year || object.Year) return 'movie';
+
+    return '';
+  }
+
+  function inferContentType(element) {
+    var fromElement = contentTypeFromObject(element) || contentTypeFromObject(element && element.card) || contentTypeFromObject(element && element.movie);
+    if (fromElement) return fromElement;
+
+    try {
+      var activity = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
+      var card = activity && activity.activity && activity.activity.card;
+      return contentTypeFromObject(card) || contentTypeFromObject(activity && activity.card) || '';
+    } catch (error) {
+      return '';
+    }
+  }
+
   function requestJson(url, payload, success, fail) {
     var headers = { 'Content-Type': 'application/json' };
     var token = storage('qbit_download_bridge_token', '');
@@ -127,9 +157,10 @@
       link: link,
       title: element.title || element.Title || '',
       tracker: element.Tracker || element.tracker || '',
+      contentType: inferContentType(element),
       savePath: storage('qbit_download_savepath', ''),
       category: storage('qbit_download_category', ''),
-      tags: storage('qbit_download_tags', ''),
+      tags: storage('qbit_download_tags', 'lampa'),
       sequential: bool('qbit_download_sequential'),
       firstLastPiece: bool('qbit_download_first_last')
     }, function () {
@@ -178,7 +209,7 @@
       ['qbit_download_username', 'input', null, 'admin'],
       ['qbit_download_password', 'input', null, ''],
       ['qbit_download_savepath', 'input', null, ''],
-      ['qbit_download_category', 'input', null, 'lampa'],
+      ['qbit_download_category', 'input', null, ''],
       ['qbit_download_tags', 'input', null, 'lampa'],
       ['qbit_download_sequential', 'trigger', null, false],
       ['qbit_download_first_last', 'trigger', null, false]
