@@ -25,6 +25,7 @@ QBIT_USERNAME=admin
 QBIT_PASSWORD=***
 BRIDGE_TOKEN=длинный-случайный-токен
 QBIT_SAVE_PATH=/Volumes/Media/Downloads/qBittorrent
+QBIT_INCOMPLETE_PATH=/Volumes/Media/Downloads/qBittorrent/.incomplete
 QBIT_CATEGORY=lampa
 QBIT_MOVIES_PATH=/Volumes/Media/FILMS
 QBIT_TV_PATH="/Volumes/Media/TV SHOWS"
@@ -38,6 +39,14 @@ QBIT_TV_CATEGORY=tv-shows
 - сериал → `/Volumes/Media/TV SHOWS`, категория `tv-shows`.
 
 Если тип не удалось определить, bridge использует общий `QBIT_SAVE_PATH`.
+
+Для защиты Plex от недокачанных файлов на Anton Mac mini включён временный каталог qBittorrent:
+
+```text
+/Volumes/Media/Downloads/qBittorrent/.incomplete
+```
+
+qBittorrent должен держать незавершённые загрузки там и переносить готовый payload в итоговый save path.
 
 Запуск вручную:
 
@@ -106,7 +115,10 @@ http://IP_ВАШЕГО_MAC_MINI:8790/lampa-qbit-download.js
 
 ## Как пользоваться
 
-Откройте карточку фильма или сериала в Lampa, перейдите в торренты, выделите нужную раздачу и сделайте долгое нажатие/кнопку меню. В списке действий появится `Скачать в qBittorrent`.
+Откройте карточку фильма или сериала в Lampa, перейдите в торренты, выделите нужную раздачу и сделайте долгое нажатие/кнопку меню. В списке действий появятся:
+
+- `Скачать как фильм` — отправляет в Plex Movies (`/Volumes/Media/FILMS`).
+- `Скачать как сериал` — отправляет в Plex TV Shows (`/Volumes/Media/TV SHOWS`).
 
 ## Важные замечания
 

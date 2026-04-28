@@ -151,13 +151,13 @@
     });
   }
 
-  function sendBridge(element, link) {
+  function sendBridge(element, link, contentType) {
     var baseUrl = cleanUrl(storage('qbit_download_bridge_url', 'http://192.168.1.149:8787'));
     requestJson(baseUrl + '/add', {
       link: link,
       title: element.title || element.Title || '',
       tracker: element.Tracker || element.tracker || '',
-      contentType: inferContentType(element),
+      contentType: contentType || inferContentType(element),
       savePath: storage('qbit_download_savepath', ''),
       category: storage('qbit_download_category', ''),
       tags: storage('qbit_download_tags', 'lampa'),
@@ -170,12 +170,12 @@
     });
   }
 
-  function download(element) {
+  function download(element, contentType) {
     var link = torrentLink(element);
     if (!link) return notify('Не нашёл magnet или ссылку .torrent');
 
     if (storage('qbit_download_mode', 'bridge') === 'direct') sendDirect(element, link);
-    else sendBridge(element, link);
+    else sendBridge(element, link, contentType);
   }
 
   function addSettings() {
@@ -192,7 +192,9 @@
       qbit_download_tags: { ru: 'Теги', en: 'Tags' },
       qbit_download_sequential: { ru: 'Последовательная загрузка', en: 'Sequential download' },
       qbit_download_first_last: { ru: 'Первый и последний блок', en: 'First and last piece' },
-      qbit_download_menu: { ru: 'Скачать в qBittorrent', en: 'Download to qBittorrent' }
+      qbit_download_menu: { ru: 'Скачать в qBittorrent', en: 'Download to qBittorrent' },
+      qbit_download_menu_movie: { ru: 'Скачать как фильм', en: 'Download as movie' },
+      qbit_download_menu_tv: { ru: 'Скачать как сериал', en: 'Download as TV show' }
     });
 
     Lampa.SettingsApi.addComponent({
@@ -231,7 +233,7 @@
         var onSelect = params.onSelect;
         params.onSelect = function (item) {
           if (item && item[MENU_FLAG]) {
-            download(item.element);
+            download(item.element, item.contentType || '');
             return;
           }
           if (onSelect) onSelect.apply(this, arguments);
@@ -245,9 +247,17 @@
     Lampa.Listener.follow('torrent', function (event) {
       if (event.type !== 'onlong' || !event.menu || !torrentLink(event.element)) return;
       event.menu.unshift({
-        title: Lampa.Lang.translate('qbit_download_menu'),
+        title: Lampa.Lang.translate('qbit_download_menu_movie'),
         subtitle: event.element.Title || event.element.title || '',
         element: event.element,
+        contentType: 'movie',
+        qbit_download: true,
+        __lampa_qbit_download: true
+      }, {
+        title: Lampa.Lang.translate('qbit_download_menu_tv'),
+        subtitle: event.element.Title || event.element.title || '',
+        element: event.element,
+        contentType: 'tv',
         qbit_download: true,
         __lampa_qbit_download: true
       });
