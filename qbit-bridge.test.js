@@ -247,3 +247,97 @@ test('bridge rejects unsupported torrent links', async () => {
     await close(qbit.server);
   }
 });
+
+
+test('bridge lists downloaded video files and streams them with range support', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-downloads-'));
+  const moviesDir = path.join(tempDir, 'FILMS');
+  const tvDir = path.join(tempDir, 'TV SHOWS');
+  fs.mkdirSync(path.join(moviesDir, 'Movie One'), { recursive: true });
+  fs.mkdirSync(path.join(tvDir, 'Show One'), { recursive: true });
+  const movieFile = path.join(moviesDir, 'Movie One', 'Movie.One.2026.mkv');
+  const tvFile = path.join(tvDir, 'Show One', 'Show.One.S01E01.mp4');
+  fs.writeFileSync(movieFile, '0123456789abcdef');
+  fs.writeFileSync(tvFile, 'episode');
+  fs.writeFileSync(path.join(moviesDir, 'ignore.txt'), 'not video');
+
+  const bridge = await startBridge({
+    QBIT_ADD_MODE: 'cli',
+    QBIT_BINARY: process.execPath,
+    LAMPA_DOWNLOAD_ROOTS: `${moviesDir}${path.delimiter}${tvDir}`,
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const denied = await fetch(`http://127.0.0.1:${bridge.port}/downloads`);
+    assert.equal(denied.status, 401);
+
+    const listed = await fetch(`http://127.0.0.1:${bridge.port}/downloads`, {
+      headers: { 'X-Bridge-Token': 'test-token' }
+    });
+    assert.equal(listed.status, 200);
+    const json = await listed.json();
+    assert.equal(json.ok, true);
+    assert.equal(json.items.length, 2);
+    const movie = json.items.find((item) => item.name === 'Movie.One.2026.mkv');
+    assert.ok(movie, 'movie file is listed');
+    assert.equal(movie.size, 16);
+    assert.equal(movie.type, 'movie');
+    assert.match(movie.streamUrl, /^\/media\//);
+    assert.equal(movie.path, undefined, 'absolute filesystem path is not exposed');
+
+    const ranged = await fetch(`http://127.0.0.1:${bridge.port}${movie.streamUrl}`, {
+      headers: { Range: 'bytes=2-5', 'X-Bridge-Token': 'test-token' }
+    });
+    assert.equal(ranged.status, 206);
+    assert.equal(ranged.headers.get('content-range'), 'bytes 2-5/16');
+    assert.equal(await ranged.text(), '2345');
+  } finally {
+    await bridge.stop();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('bridge deletes downloaded files by id without accepting raw paths', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-delete-'));
+  const moviesDir = path.join(tempDir, 'FILMS');
+  fs.mkdirSync(moviesDir, { recursive: true });
+  const movieFile = path.join(moviesDir, 'Delete.Me.mkv');
+  fs.writeFileSync(movieFile, 'delete me');
+
+  const bridge = await startBridge({
+    QBIT_ADD_MODE: 'cli',
+    QBIT_BINARY: process.execPath,
+    LAMPA_DOWNLOAD_ROOTS: moviesDir,
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const listedResponse = await fetch(`http://127.0.0.1:${bridge.port}/downloads`, {
+      headers: { 'X-Bridge-Token': 'test-token' }
+    });
+    assert.equal(listedResponse.status, 200);
+    const listed = await listedResponse.json();
+    const id = listed.items[0].id;
+
+    const unsafe = await fetch(`http://127.0.0.1:${bridge.port}/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({ path: movieFile })
+    });
+    assert.equal(unsafe.status, 500);
+    assert.equal(fs.existsSync(movieFile), true);
+
+    const deleted = await fetch(`http://127.0.0.1:${bridge.port}/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({ id })
+    });
+    assert.equal(deleted.status, 200);
+    assert.deepEqual(await deleted.json(), { ok: true, deleted: true });
+    assert.equal(fs.existsSync(movieFile), false);
+  } finally {
+    await bridge.stop();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

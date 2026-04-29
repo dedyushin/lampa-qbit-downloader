@@ -17,3 +17,13 @@ test('Lampa plugin exposes explicit movie and TV download menu actions', () => {
   assert.match(source, /contentType:\s*'tv'/);
   assert.match(source, /download\(item\.element, item\.contentType \|\| ''\)/);
 });
+
+
+test('Lampa plugin exposes downloaded files browser actions', () => {
+  const source = pluginSource();
+  assert.match(source, /qbit_download_open_downloads:\s*\{ ru: 'Скачанное'/);
+  assert.match(source, /\/downloads/);
+  assert.match(source, /AndroidJS\.openPlayer/);
+  assert.match(source, /\/delete/);
+  assert.match(source, /type:\s*'static'/);
+});

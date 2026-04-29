@@ -1,6 +1,8 @@
 'use strict';
 
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { execFile } = require('child_process');
 
 const env = process.env;
@@ -21,7 +23,8 @@ const config = {
   firstLastPiece: env.QBIT_FIRST_LAST_PIECE === 'true',
   bridgeToken: env.BRIDGE_TOKEN || '',
   addMode: env.QBIT_ADD_MODE || 'auto',
-  qbitBinary: env.QBIT_BINARY || '/Applications/qBittorrent.app/Contents/MacOS/qbittorrent'
+  qbitBinary: env.QBIT_BINARY || '/Applications/qBittorrent.app/Contents/MacOS/qbittorrent',
+  downloadRoots: parseRoots(env.LAMPA_DOWNLOAD_ROOTS || '')
 };
 
 let sid = '';
@@ -30,16 +33,34 @@ function trimRight(value) {
   return String(value).replace(/\/+$/, '');
 }
 
-function send(res, status, body) {
-  const data = JSON.stringify(body);
-  res.writeHead(status, {
+function parseRoots(value) {
+  return String(value || '')
+    .split(path.delimiter)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function defaultDownloadRoots() {
+  const roots = config.downloadRoots.length ? config.downloadRoots : [config.moviesPath, config.tvPath, config.savePath];
+  return [...new Set(roots.filter(Boolean).map((root) => path.resolve(root)))];
+}
+
+function corsHeaders(extra) {
+  return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Bridge-Token, Authorization, Access-Control-Request-Private-Network',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Bridge-Token, Authorization, Access-Control-Request-Private-Network, Range',
     'Access-Control-Allow-Private-Network': 'true',
+    ...extra
+  };
+}
+
+function send(res, status, body) {
+  const data = JSON.stringify(body);
+  res.writeHead(status, corsHeaders({
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(data)
-  });
+  }));
   res.end(data);
 }
 
@@ -90,6 +111,135 @@ function validateTorrentLink(link) {
   if (lower.startsWith('http://') || lower.startsWith('https://')) return value;
 
   throw new Error('Unsupported torrent link. Expected magnet, http or https URL');
+}
+
+
+const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.m4v', '.mov', '.avi', '.webm', '.ts', '.m2ts']);
+
+function encodeMediaId(rootIndex, relativePath) {
+  return Buffer.from(`${rootIndex}:${relativePath}`, 'utf8').toString('base64url');
+}
+
+function decodeMediaId(id) {
+  const decoded = Buffer.from(String(id || ''), 'base64url').toString('utf8');
+  const split = decoded.indexOf(':');
+  if (split < 1) throw new Error('Invalid media id');
+  return { rootIndex: Number(decoded.slice(0, split)), relativePath: decoded.slice(split + 1) };
+}
+
+function mediaPathFromId(id) {
+  const roots = defaultDownloadRoots();
+  const decoded = decodeMediaId(id);
+  if (!Number.isInteger(decoded.rootIndex) || decoded.rootIndex < 0 || decoded.rootIndex >= roots.length) {
+    throw new Error('Invalid media id');
+  }
+  const root = roots[decoded.rootIndex];
+  const filePath = path.resolve(root, decoded.relativePath);
+  const relative = path.relative(root, filePath);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Invalid media id');
+  return { root, filePath, relativePath: relative, rootIndex: decoded.rootIndex };
+}
+
+function rootType(root) {
+  const normalized = root.toLowerCase();
+  if (normalized === path.resolve(config.moviesPath).toLowerCase()) return 'movie';
+  if (normalized === path.resolve(config.tvPath).toLowerCase()) return 'tv';
+  if (/films|movies|фильм|кино/i.test(root)) return 'movie';
+  if (/tv|shows|series|сериал/i.test(root)) return 'tv';
+  return 'video';
+}
+
+function walkVideoFiles(root, rootIndex, roots, results, depth = 0) {
+  if (depth > 8 || results.length >= 500) return;
+  let entries = [];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch (_) {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const fullPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      walkVideoFiles(fullPath, rootIndex, roots, results, depth + 1);
+      continue;
+    }
+    if (!entry.isFile() || !VIDEO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
+
+    const stat = fs.statSync(fullPath);
+    const relativePath = path.relative(roots[rootIndex], fullPath);
+    const id = encodeMediaId(rootIndex, relativePath);
+    results.push({
+      id,
+      name: entry.name,
+      folder: path.dirname(relativePath) === '.' ? '' : path.dirname(relativePath),
+      size: stat.size,
+      modifiedAt: stat.mtime.toISOString(),
+      type: rootType(roots[rootIndex]),
+      streamUrl: `/media/${encodeURIComponent(id)}`
+    });
+  }
+}
+
+function listDownloads() {
+  const roots = defaultDownloadRoots();
+  const items = [];
+  roots.forEach((root, index) => walkVideoFiles(root, index, roots, items));
+  items.sort((a, b) => String(b.modifiedAt).localeCompare(String(a.modifiedAt)) || a.name.localeCompare(b.name));
+  return items;
+}
+
+function contentTypeFor(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.mp4' || ext === '.m4v') return 'video/mp4';
+  if (ext === '.webm') return 'video/webm';
+  if (ext === '.ts') return 'video/mp2t';
+  return 'video/x-matroska';
+}
+
+function streamMedia(req, res, id) {
+  const media = mediaPathFromId(id);
+  const stat = fs.statSync(media.filePath);
+  if (!stat.isFile()) throw new Error('Media is not a file');
+
+  const contentType = contentTypeFor(media.filePath);
+  const range = req.headers.range;
+  if (!range) {
+    res.writeHead(200, corsHeaders({
+      'Accept-Ranges': 'bytes',
+      'Content-Type': contentType,
+      'Content-Length': stat.size
+    }));
+    return fs.createReadStream(media.filePath).pipe(res);
+  }
+
+  const match = String(range).match(/^bytes=(\d*)-(\d*)$/);
+  if (!match) {
+    res.writeHead(416, corsHeaders({ 'Content-Range': `bytes */${stat.size}` }));
+    return res.end();
+  }
+
+  let start = match[1] ? Number(match[1]) : 0;
+  let end = match[2] ? Number(match[2]) : stat.size - 1;
+  if (!match[1] && match[2]) {
+    const suffixLength = Number(match[2]);
+    start = Math.max(0, stat.size - suffixLength);
+    end = stat.size - 1;
+  }
+  if (start > end || start >= stat.size) {
+    res.writeHead(416, corsHeaders({ 'Content-Range': `bytes */${stat.size}` }));
+    return res.end();
+  }
+  end = Math.min(end, stat.size - 1);
+
+  res.writeHead(206, corsHeaders({
+    'Accept-Ranges': 'bytes',
+    'Content-Type': contentType,
+    'Content-Length': end - start + 1,
+    'Content-Range': `bytes ${start}-${end}/${stat.size}`
+  }));
+  return fs.createReadStream(media.filePath, { start, end }).pipe(res);
 }
 
 function routedContentType(payload) {
@@ -255,6 +405,25 @@ const server = http.createServer(async (req, res) => {
       if (!isAuthorized(req, url)) return send(res, 401, { ok: false, error: 'Unauthorized' });
       const version = await qbitStatus();
       return send(res, 200, { ok: true, qbitUrl: config.qbitUrl, qbitVersion: version });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/downloads') {
+      if (!isAuthorized(req, url)) return send(res, 401, { ok: false, error: 'Unauthorized' });
+      return send(res, 200, { ok: true, items: listDownloads() });
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith('/media/')) {
+      if (!isAuthorized(req, url)) return send(res, 401, { ok: false, error: 'Unauthorized' });
+      return streamMedia(req, res, decodeURIComponent(url.pathname.slice('/media/'.length)));
+    }
+
+    if (req.method === 'POST' && url.pathname === '/delete') {
+      if (!isAuthorized(req, url)) return send(res, 401, { ok: false, error: 'Unauthorized' });
+      const payload = await readJson(req);
+      if (!payload.id || payload.path) throw new Error('Delete requires media id');
+      const media = mediaPathFromId(payload.id);
+      fs.rmSync(media.filePath, { force: false });
+      return send(res, 200, { ok: true, deleted: true });
     }
 
     if (req.method === 'POST' && url.pathname === '/add') {
