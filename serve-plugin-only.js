@@ -6,7 +6,10 @@ const path = require('path');
 
 const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 8790);
-const pluginPath = path.join(__dirname, 'lampa-qbit-download.js');
+const pluginFiles = new Map([
+  ['/lampa-qbit-download.js', path.join(__dirname, 'lampa-qbit-download.js')],
+  ['/lampa-qbit-media.js', path.join(__dirname, 'lampa-qbit-media.js')]
+]);
 
 function send(res, status, body, headers = {}) {
   res.writeHead(status, {
@@ -22,7 +25,9 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${host}:${port}`);
 
   if (req.method === 'OPTIONS') return send(res, 204, '');
-  if ((req.method === 'GET' || req.method === 'HEAD') && (url.pathname === '/' || url.pathname === '/lampa-qbit-download.js')) {
+  const pathname = url.pathname === '/' ? '/lampa-qbit-download.js' : url.pathname;
+  const pluginPath = pluginFiles.get(pathname);
+  if ((req.method === 'GET' || req.method === 'HEAD') && pluginPath) {
     const source = fs.readFileSync(pluginPath);
     return send(res, 200, req.method === 'HEAD' ? '' : source, {
       'Content-Type': 'application/javascript; charset=utf-8',
@@ -35,7 +40,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Serving only lampa-qbit-download.js at http://${host}:${port}/lampa-qbit-download.js`);
+  console.log(`Serving Lampa plugins at http://${host}:${port}/lampa-qbit-download.js and /lampa-qbit-media.js`);
 });
 
 server.on('error', (error) => {

@@ -178,132 +178,6 @@
     else sendBridge(element, link, contentType);
   }
 
-
-  function bridgeBaseUrl() {
-    return cleanUrl(storage('qbit_download_bridge_url', 'http://192.168.1.149:8787'));
-  }
-
-  function bridgeToken() {
-    return storage('qbit_download_bridge_token', '');
-  }
-
-  function withToken(url) {
-    var token = bridgeToken();
-    if (!token) return url;
-    return url + (url.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(token);
-  }
-
-  function requestGet(url, success, fail) {
-    var headers = {};
-    var token = bridgeToken();
-    if (token) headers['X-Bridge-Token'] = token;
-
-    fetch(url, { method: 'GET', headers: headers }).then(function (response) {
-      return response.text().then(function (text) {
-        var json = {};
-        try {
-          json = text ? JSON.parse(text) : {};
-        } catch (error) {
-          json = { ok: response.ok, response: text };
-        }
-        if (!response.ok || json.ok === false) throw new Error(json.error || json.response || response.status);
-        success(json);
-      });
-    }).catch(function (error) {
-      fail(error);
-    });
-  }
-
-  function humanSize(bytes) {
-    var value = Number(bytes || 0);
-    var units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    var unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-      value = value / 1024;
-      unit += 1;
-    }
-    return (unit ? value.toFixed(value >= 10 ? 1 : 2) : String(value)) + ' ' + units[unit];
-  }
-
-  function absoluteBridgeUrl(path) {
-    if (/^https?:\/\//i.test(path)) return path;
-    return bridgeBaseUrl() + path;
-  }
-
-  function playDownload(item) {
-    var url = withToken(absoluteBridgeUrl(item.streamUrl));
-    var payload = {
-      url: url,
-      title: item.name || 'Lampa download',
-      filename: item.name || 'video',
-      subtitles: []
-    };
-
-    if (window.AndroidJS && AndroidJS.openPlayer) {
-      AndroidJS.openPlayer(url, JSON.stringify(payload));
-    } else if (Lampa.Utils && Lampa.Utils.putScript) {
-      window.open(url, '_blank');
-    } else {
-      window.location.href = url;
-    }
-  }
-
-  function deleteDownload(item) {
-    requestJson(bridgeBaseUrl() + '/delete', { id: item.id }, function () {
-      notify('Удалено: ' + item.name);
-      showDownloads();
-    }, function (error) {
-      notify('Удаление: ' + error.message);
-    });
-  }
-
-  function showDownloadActions(item) {
-    Lampa.Select.show({
-      title: item.name,
-      items: [{
-        title: Lampa.Lang.translate('qbit_download_play'),
-        subtitle: humanSize(item.size),
-        action: 'play'
-      }, {
-        title: Lampa.Lang.translate('qbit_download_delete'),
-        subtitle: Lampa.Lang.translate('qbit_download_delete_hint'),
-        action: 'delete'
-      }],
-      onSelect: function (action) {
-        if (action.action === 'delete') deleteDownload(item);
-        else playDownload(item);
-      },
-      onBack: function () {
-        showDownloads();
-      }
-    });
-  }
-
-  function showDownloads() {
-    notify('Загружаю список скачанного...');
-    requestGet(bridgeBaseUrl() + '/downloads', function (json) {
-      var items = (json.items || []).map(function (item) {
-        return {
-          title: item.name,
-          subtitle: (item.folder ? item.folder + ' · ' : '') + humanSize(item.size),
-          item: item
-        };
-      });
-
-      if (!items.length) return notify('Скачанных видео не найдено');
-
-      Lampa.Select.show({
-        title: Lampa.Lang.translate('qbit_download_open_downloads'),
-        items: items,
-        onSelect: function (selected) {
-          showDownloadActions(selected.item);
-        }
-      });
-    }, function (error) {
-      notify('Скачанное: ' + error.message);
-    });
-  }
-
   function addSettings() {
     Lampa.Lang.add({
       qbit_download_title: { ru: 'qBittorrent загрузка', en: 'qBittorrent download' },
@@ -320,32 +194,13 @@
       qbit_download_first_last: { ru: 'Первый и последний блок', en: 'First and last piece' },
       qbit_download_menu: { ru: 'Скачать в qBittorrent', en: 'Download to qBittorrent' },
       qbit_download_menu_movie: { ru: 'Скачать как фильм', en: 'Download as movie' },
-      qbit_download_menu_tv: { ru: 'Скачать как сериал', en: 'Download as TV show' },
-      qbit_download_open_downloads: { ru: 'Скачанное', en: 'Downloads' },
-      qbit_download_open_downloads_descr: { ru: 'Открыть скачанные файлы с Mac mini', en: 'Open downloaded files from Mac mini' },
-      qbit_download_play: { ru: 'Воспроизвести', en: 'Play' },
-      qbit_download_delete: { ru: 'Удалить', en: 'Delete' },
-      qbit_download_delete_hint: { ru: 'Удалить файл с диска', en: 'Delete file from disk' }
+      qbit_download_menu_tv: { ru: 'Скачать как сериал', en: 'Download as TV show' }
     });
 
     Lampa.SettingsApi.addComponent({
       component: 'qbit_download',
       name: Lampa.Lang.translate('qbit_download_title'),
       icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3Zm1 0v8.59l3.3-3.3 1.4 1.42-5.7 5.7-5.7-5.7 1.4-1.42 3.3 3.3V3h2Z"/></svg>'
-    });
-
-    Lampa.SettingsApi.addParam({
-      component: 'qbit_download',
-      param: { name: 'qbit_download_open_downloads', type: 'static' },
-      field: {
-        name: Lampa.Lang.translate('qbit_download_open_downloads'),
-        description: Lampa.Lang.translate('qbit_download_open_downloads_descr')
-      },
-      onRender: function (item) {
-        item.on('hover:enter', function () {
-          showDownloads();
-        });
-      }
     });
 
     [

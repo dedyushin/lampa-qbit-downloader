@@ -5,23 +5,28 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
 
-function pluginSource() {
-  return fs.readFileSync(path.join(__dirname, 'lampa-qbit-download.js'), 'utf8');
+function pluginSource(file = 'lampa-qbit-download.js') {
+  return fs.readFileSync(path.join(__dirname, file), 'utf8');
 }
 
-test('Lampa plugin exposes explicit movie and TV download menu actions', () => {
+test('main Lampa downloader plugin exposes only explicit movie and TV download menu actions', () => {
   const source = pluginSource();
   assert.match(source, /qbit_download_menu_movie:\s*\{ ru: 'Скачать как фильм'/);
   assert.match(source, /qbit_download_menu_tv:\s*\{ ru: 'Скачать как сериал'/);
   assert.match(source, /contentType:\s*'movie'/);
   assert.match(source, /contentType:\s*'tv'/);
   assert.match(source, /download\(item\.element, item\.contentType \|\| ''\)/);
+  assert.doesNotMatch(source, /qbit_download_open_downloads/);
+  assert.doesNotMatch(source, /AndroidJS\.openPlayer/);
+  assert.doesNotMatch(source, /\/downloads/);
+  assert.doesNotMatch(source, /\/delete/);
 });
 
 
-test('Lampa plugin exposes downloaded files browser actions', () => {
-  const source = pluginSource();
-  assert.match(source, /qbit_download_open_downloads:\s*\{ ru: 'Скачанное'/);
+test('separate media plugin exposes downloaded files browser actions', () => {
+  const source = pluginSource('lampa-qbit-media.js');
+  assert.match(source, /PLUGIN_ID = 'lampa_qbit_media'/);
+  assert.match(source, /qbit_media_open_downloads:\s*\{ ru: 'Скачанное'/);
   assert.match(source, /\/downloads/);
   assert.match(source, /AndroidJS\.openPlayer/);
   assert.match(source, /\/delete/);
