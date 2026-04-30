@@ -305,6 +305,50 @@
     return Lampa.TMDB && Lampa.TMDB.image ? Lampa.TMDB.image('t/p/w300/' + String(path).replace(/^\//, '')) : '';
   }
 
+  function stillUrl(path) {
+    if (!path) return '';
+    if (/^https?:\/\//i.test(path)) return path;
+    return Lampa.TMDB && Lampa.TMDB.image ? Lampa.TMDB.image('t/p/w300/' + String(path).replace(/^\//, '')) : '';
+  }
+
+  function fileExtension(name) {
+    var match = String(name || '').match(/\.([a-z0-9]{2,5})$/i);
+    return match ? match[1].toLowerCase() : 'mkv';
+  }
+
+  function loadEpisodeDetails(group, done) {
+    var map = {};
+    if (!group || group.libraryType !== 'tv' || !group.meta || !group.meta.card || !group.meta.card.id) return done(map);
+    if (!Lampa.Api || !Lampa.Api.sources) return done(map);
+
+    var seasons = {};
+    (group.files || []).forEach(function (file) {
+      var ep = episodeInfo(file);
+      if (ep) seasons[ep.season] = true;
+    });
+
+    var seasonList = Object.keys(seasons).map(function (season) { return Number(season); }).filter(Boolean);
+    if (!seasonList.length) return done(map);
+
+    try {
+      var source = (Lampa.Api.sources.cub && Lampa.Api.sources.cub.seasons) ? Lampa.Api.sources.cub : Lampa.Api.sources.tmdb;
+      if (!source || !source.seasons) return done(map);
+
+      source.seasons(group.meta.card, seasonList, function (result) {
+        Object.keys(result || {}).forEach(function (seasonNumber) {
+          var season = result[seasonNumber] || {};
+          (season.episodes || []).forEach(function (episode) {
+            var key = Number(seasonNumber) + 'x' + Number(episode.episode_number);
+            map[key] = episode;
+          });
+        });
+        done(map);
+      });
+    } catch (error) {
+      done(map);
+    }
+  }
+
   function openLampaCard(group) {
     if (!group.meta || !group.meta.card) return notify('Карточка Lampa не найдена');
     var card = group.meta.card;
@@ -367,7 +411,79 @@
     });
   }
 
+  function sortedFiles(group) {
+    return group.files.map(function (file) {
+      return { file: file, display: fileDisplay(file, group) };
+    }).sort(function (a, b) {
+      return a.display.sort === b.display.sort ? String(a.file.name || '').localeCompare(String(b.file.name || '')) : a.display.sort - b.display.sort;
+    });
+  }
+
+  function showFilesModal(group, refresh) {
+    loadEpisodeDetails(group, function (episodeDetails) {
+      var title = group.meta && group.meta.card ? (group.meta.card.title || group.meta.card.name || group.title) : group.title;
+      var wrap = $('<div class="files qbit-media-files-modal"></div>');
+      var fallbackImage = group.meta && group.meta.card ? imageUrl(group.meta.card) : '';
+
+      if (group.meta && group.meta.card) {
+        var cardRow = $('<div class="torrent-file selector qbit-media-modal-action"><div class="torrent-file__title"></div><div class="torrent-file__size"></div></div>');
+        cardRow.find('.torrent-file__title').text(Lampa.Lang.translate('qbit_media_open_card'));
+        cardRow.find('.torrent-file__size').text(title);
+        cardRow.data('action', 'card');
+        wrap.append(cardRow);
+      }
+
+      sortedFiles(group).forEach(function (row) {
+        var ep = episodeInfo(row.file);
+        var detail = ep ? (episodeDetails[ep.season + 'x' + ep.episode] || {}) : {};
+        var episodeTitle = detail.name || row.display.title;
+        var airDate = detail.air_date || '';
+        var img = stillUrl(detail.still_path) || fallbackImage;
+        var line = Lampa.Lang.translate('qbit_media_season') + ' - ' + (ep ? ep.season : '') + (airDate ? ' • ' + Lampa.Lang.translate('qbit_media_air_date') + ' - ' + airDate : '');
+        var item = $('<div class="torrent-serial selector layer--visible layer--render qbit-media-episode-row"><img class="torrent-serial__img" /><div class="torrent-serial__content"><div class="torrent-serial__body"><div class="torrent-serial__title"></div><div class="torrent-serial__line"><span></span></div></div><div class="torrent-serial__detail"><div class="torrent-serial__size"></div><div class="torrent-serial__exe"></div></div><div class="torrent-serial__clear"></div></div><div class="torrent-serial__episode"></div></div>');
+        item.find('.torrent-serial__img').attr('src', img || '').attr('data-src', img || '');
+        item.find('.torrent-serial__title').text(episodeTitle);
+        item.find('.torrent-serial__line span').text(line);
+        item.find('.torrent-serial__size').text(humanSize(row.file.size));
+        item.find('.torrent-serial__exe').text('.' + fileExtension(row.file.name));
+        item.find('.torrent-serial__episode').text(ep ? ep.episode : '');
+        item.data('action', 'file');
+        item.data('file', row.file);
+        wrap.append(item);
+      });
+
+      var deleteRow = $('<div class="torrent-file selector qbit-media-modal-action"><div class="torrent-file__title"></div><div class="torrent-file__size"></div></div>');
+      deleteRow.find('.torrent-file__title').text(Lampa.Lang.translate(group.files.length > 1 ? 'qbit_media_delete_all' : 'qbit_media_delete'));
+      deleteRow.find('.torrent-file__size').text(humanSize(group.size));
+      deleteRow.data('action', 'delete');
+      wrap.append(deleteRow);
+
+      Lampa.Modal.open({
+        title: Lampa.Lang.translate('title_files') || 'Файлы',
+        html: wrap,
+        size: 'large',
+        scroll_to_center: true,
+        onSelect: function (element) {
+          var row = $(element);
+          var action = row.data('action');
+          if (action === 'card') {
+            Lampa.Modal.close();
+            openLampaCard(group);
+          } else if (action === 'file') {
+            Lampa.Modal.close();
+            showFileActions(row.data('file'), group, refresh);
+          } else if (action === 'delete') {
+            Lampa.Modal.close();
+            deleteGroup(group, refresh);
+          }
+        }
+      });
+    });
+  }
+
   function showGroup(group, refresh) {
+    if (group.files.length > 1 && Lampa.Modal && Lampa.Modal.open) return showFilesModal(group, refresh);
+
     var items = [];
 
     if (group.files.length === 1) {
@@ -378,16 +494,6 @@
       items.push({ title: Lampa.Lang.translate('qbit_media_open_card'), subtitle: group.title, action: 'card' });
     }
 
-    if (group.files.length > 1) {
-      group.files.map(function (file) {
-        return { file: file, display: fileDisplay(file, group) };
-      }).sort(function (a, b) {
-        return a.display.sort === b.display.sort ? String(a.file.name || '').localeCompare(String(b.file.name || '')) : a.display.sort - b.display.sort;
-      }).forEach(function (row) {
-        items.push({ title: row.display.title, subtitle: row.display.subtitle, action: 'file', file: row.file });
-      });
-    }
-
     items.push({ title: Lampa.Lang.translate(group.files.length > 1 ? 'qbit_media_delete_all' : 'qbit_media_delete'), subtitle: humanSize(group.size), action: 'delete' });
 
     Lampa.Select.show({
@@ -396,7 +502,6 @@
       onSelect: function (selected) {
         if (selected.action === 'play') playDownload(group.files[0]);
         else if (selected.action === 'card') openLampaCard(group);
-        else if (selected.action === 'file') showFileActions(selected.file, group, refresh);
         else if (selected.action === 'delete') deleteGroup(group, refresh);
       }
     });
@@ -621,7 +726,8 @@
       qbit_media_error: { ru: 'Ошибка загрузки', en: 'Loading error' },
       qbit_media_open_card: { ru: 'Открыть карточку Lampa', en: 'Open Lampa card' },
       qbit_media_episode: { ru: 'Эпизод', en: 'Episode' },
-      qbit_media_season: { ru: 'Сезон', en: 'Season' }
+      qbit_media_season: { ru: 'Сезон', en: 'Season' },
+      qbit_media_air_date: { ru: 'Выход', en: 'Air date' }
     });
 
     Lampa.SettingsApi.addComponent({
@@ -673,7 +779,9 @@
       '.qbit-media-rating{position:absolute;right:.45em;bottom:.45em;background:rgba(0,0,0,.72);border-radius:.35em;padding:.15em .45em;color:#fff;font-size:.95em;font-weight:700;}',
       '.qbit-media-card-title{font-size:1.05em;color:#fff;font-weight:600;margin-top:.7em;line-height:1.18;min-height:2.35em;}',
       '.qbit-media-card-meta{font-size:.82em;color:rgba(255,255,255,.62);line-height:1.25;margin-top:.25em;}',
-      '.qbit-media-empty{font-size:1.2em;color:rgba(255,255,255,.7);padding:2em;}'
+      '.qbit-media-empty{font-size:1.2em;color:rgba(255,255,255,.7);padding:2em;}',
+      '.qbit-media-files-modal .torrent-serial__img[src=\"\"]{background:linear-gradient(135deg,#29313d,#12151b);}',
+      '.qbit-media-modal-action{margin-bottom:.75em;}'
     ].join('\n');
     document.head.appendChild(style);
   }

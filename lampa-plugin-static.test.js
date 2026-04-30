@@ -39,8 +39,14 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /year !== wantedYear\) score -= 70/);
   assert.match(source, /function episodeInfo/);
   assert.match(source, /function fileDisplay/);
+  assert.match(source, /function showFilesModal/);
+  assert.match(source, /Lampa\.Modal\.open/);
+  assert.match(source, /torrent-serial selector/);
+  assert.match(source, /function loadEpisodeDetails/);
+  assert.match(source, /source\.seasons\(group\.meta\.card/);
   assert.match(source, /qbit_media_episode:\s*\{ ru: 'Эпизод'/);
   assert.match(source, /qbit_media_season:\s*\{ ru: 'Сезон'/);
+  assert.match(source, /qbit_media_air_date:\s*\{ ru: 'Выход'/);
   assert.match(source, /ep\.season \* 1000 \+ ep\.episode/);
   assert.match(source, /function librarySummary/);
   assert.match(source, /self\.buildLibraries/);
