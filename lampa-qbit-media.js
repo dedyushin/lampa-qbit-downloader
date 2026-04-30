@@ -146,8 +146,10 @@
     next();
   }
 
-  function cleanMediaName(value) {
+  function mediaNameInfo(value) {
     var original = String(value || '').replace(/\.[a-z0-9]{2,5}$/i, '').trim();
+    var yearMatch = original.match(/\b(19|20)\d{2}\b/);
+    var year = yearMatch ? yearMatch[0] : '';
     var text = original
       .replace(/\[[^\]]+\]/g, ' ')
       .replace(/\([^)]*\)/g, ' ')
@@ -169,12 +171,22 @@
       .replace(/\s+/g, ' ')
       .trim();
 
-    return text || original;
+    return { title: text || original, year: year };
+  }
+
+  function cleanMediaName(value) {
+    return mediaNameInfo(value).title;
+  }
+
+  function guessInfoFromGroup(folder, files) {
+    var base = folder && folder !== Lampa.Lang.translate('qbit_media_no_folder') ? folder : (files[0] && files[0].name) || '';
+    var info = mediaNameInfo(base);
+    if (!info.year && files && files[0]) info.year = mediaNameInfo(files[0].name).year;
+    return info;
   }
 
   function guessTitleFromGroup(folder, files) {
-    var base = folder && folder !== Lampa.Lang.translate('qbit_media_no_folder') ? folder : (files[0] && files[0].name) || '';
-    return cleanMediaName(base);
+    return guessInfoFromGroup(folder, files).title;
   }
 
   function groupDownloads(items, libraryType) {
@@ -197,12 +209,14 @@
       var size = files.reduce(function (total, item) {
         return total + Number(item.size || 0);
       }, 0);
+      var info = libraryType === 'movie' && files.length === 1 ? mediaNameInfo(files[0].name) : guessInfoFromGroup(folder, files);
       return {
         folder: folder,
         libraryType: libraryType,
         files: files,
         size: size,
-        title: libraryType === 'movie' && files.length === 1 ? cleanMediaName(files[0].name) : guessTitleFromGroup(folder, files)
+        title: info.title,
+        year: info.year
       };
     });
   }
@@ -214,23 +228,32 @@
     return { type: type, files: filtered, groups: groups, size: size };
   }
 
-  function cacheKey(query) {
-    return 'qbit_media_meta_' + String(query || '').toLowerCase().replace(/[^a-zа-я0-9]+/ig, '_').slice(0, 80);
+  function cacheKey(group) {
+    return 'qbit_media_meta_' + String((group && group.title) || '').toLowerCase().replace(/[^a-zа-я0-9]+/ig, '_').slice(0, 80) + '_' + String((group && group.year) || 'any');
   }
 
-  function bestSearchCard(groups, query) {
-    var best = null;
-    var queryLower = String(query || '').toLowerCase();
+  function cardYear(card) {
+    return String((card && (card.release_date || card.first_air_date)) || '').slice(0, 4);
+  }
 
-    (groups || []).forEach(function (group) {
-      (group.results || []).forEach(function (card) {
+  function bestSearchCard(groups, group) {
+    var best = null;
+    var query = group.title;
+    var queryLower = String(query || '').toLowerCase();
+    var wantedYear = String(group.year || '');
+
+    (groups || []).forEach(function (resultGroup) {
+      (resultGroup.results || []).forEach(function (card) {
         var title = String(card.title || card.name || card.original_title || card.original_name || '').toLowerCase();
+        var year = cardYear(card);
         var score = 0;
         if (title === queryLower) score += 100;
         if (title.indexOf(queryLower) >= 0 || queryLower.indexOf(title) >= 0) score += 50;
+        if (wantedYear && year === wantedYear) score += 80;
+        else if (wantedYear && year && year !== wantedYear) score -= 70;
         if (card.poster_path) score += 10;
         if (card.vote_average) score += Number(card.vote_average);
-        if (!best || score > best.score) best = { score: score, card: card, type: group.type || card.media_type || (card.name ? 'tv' : 'movie') };
+        if (!best || score > best.score) best = { score: score, card: card, type: resultGroup.type || card.media_type || (card.name ? 'tv' : 'movie') };
       });
     });
 
@@ -241,7 +264,7 @@
     var query = group.title;
     if (!query || !Lampa.Api || !Lampa.Api.sources || !Lampa.Api.sources.cub || !Lampa.Api.sources.cub.discovery) return done(group);
 
-    var key = cacheKey(query);
+    var key = cacheKey(group);
     var cached = Lampa.Storage.get(key, '{}');
     if (cached && cached.card) {
       group.meta = cached;
@@ -251,7 +274,7 @@
     try {
       var source = Lampa.Api.sources.cub.discovery();
       source.search({ query: encodeURIComponent(query) }, function (results) {
-        var match = bestSearchCard(results, query);
+        var match = bestSearchCard(results, group);
         if (match) {
           group.meta = match;
           Lampa.Storage.set(key, match);

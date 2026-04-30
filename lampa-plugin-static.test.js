@@ -32,6 +32,11 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /\/delete/);
   assert.match(source, /type:\s*'button'/);
   assert.match(source, /function groupDownloads/);
+  assert.match(source, /function mediaNameInfo/);
+  assert.match(source, /yearMatch = original\.match/);
+  assert.match(source, /function cardYear/);
+  assert.match(source, /year === wantedYear\) score \+= 80/);
+  assert.match(source, /year !== wantedYear\) score -= 70/);
   assert.match(source, /function librarySummary/);
   assert.match(source, /self\.buildLibraries/);
   assert.match(source, /self\.buildCategory/);
