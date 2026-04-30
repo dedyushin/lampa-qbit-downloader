@@ -318,16 +318,43 @@
     });
   }
 
-  function showFileActions(item, group, refresh) {
-    Lampa.Select.show({
+  function episodeInfo(item) {
+    var name = String((item && item.name) || '');
+    var match = name.match(/S(\d{1,2})E(\d{1,3})/i) || name.match(/(\d{1,2})x(\d{1,3})/i);
+    if (!match) return null;
+    return {
+      season: Number(match[1]),
+      episode: Number(match[2])
+    };
+  }
+
+  function fileDisplay(item, group) {
+    var ep = episodeInfo(item);
+    if (ep && group && group.libraryType === 'tv') {
+      return {
+        title: Lampa.Lang.translate('qbit_media_episode') + ' ' + ep.episode,
+        subtitle: Lampa.Lang.translate('qbit_media_season') + ' - ' + ep.season + ' • ' + humanSize(item.size),
+        sort: ep.season * 1000 + ep.episode
+      };
+    }
+    return {
       title: item.name,
+      subtitle: humanSize(item.size),
+      sort: 999999
+    };
+  }
+
+  function showFileActions(item, group, refresh) {
+    var display = fileDisplay(item, group);
+    Lampa.Select.show({
+      title: display.title,
       items: [{
         title: Lampa.Lang.translate('qbit_media_play'),
-        subtitle: humanSize(item.size),
+        subtitle: display.subtitle,
         action: 'play'
       }, {
         title: Lampa.Lang.translate('qbit_media_delete'),
-        subtitle: Lampa.Lang.translate('qbit_media_delete_hint'),
+        subtitle: item.name,
         action: 'delete'
       }],
       onSelect: function (action) {
@@ -352,8 +379,12 @@
     }
 
     if (group.files.length > 1) {
-      group.files.forEach(function (file) {
-        items.push({ title: file.name, subtitle: humanSize(file.size), action: 'file', file: file });
+      group.files.map(function (file) {
+        return { file: file, display: fileDisplay(file, group) };
+      }).sort(function (a, b) {
+        return a.display.sort === b.display.sort ? String(a.file.name || '').localeCompare(String(b.file.name || '')) : a.display.sort - b.display.sort;
+      }).forEach(function (row) {
+        items.push({ title: row.display.title, subtitle: row.display.subtitle, action: 'file', file: row.file });
       });
     }
 
@@ -588,7 +619,9 @@
       qbit_media_loading: { ru: 'Загружаю медиатеку...', en: 'Loading library...' },
       qbit_media_empty: { ru: 'Скачанных видео не найдено', en: 'No downloaded videos found' },
       qbit_media_error: { ru: 'Ошибка загрузки', en: 'Loading error' },
-      qbit_media_open_card: { ru: 'Открыть карточку Lampa', en: 'Open Lampa card' }
+      qbit_media_open_card: { ru: 'Открыть карточку Lampa', en: 'Open Lampa card' },
+      qbit_media_episode: { ru: 'Эпизод', en: 'Episode' },
+      qbit_media_season: { ru: 'Сезон', en: 'Season' }
     });
 
     Lampa.SettingsApi.addComponent({
