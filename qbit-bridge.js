@@ -41,7 +41,7 @@ function parseRoots(value) {
 }
 
 function defaultDownloadRoots() {
-  const roots = config.downloadRoots.length ? config.downloadRoots : [config.moviesPath, config.tvPath, config.savePath];
+  const roots = config.downloadRoots.length ? config.downloadRoots : [config.moviesPath, config.tvPath];
   return [...new Set(roots.filter(Boolean).map((root) => path.resolve(root)))];
 }
 

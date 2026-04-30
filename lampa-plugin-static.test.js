@@ -32,6 +32,12 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /\/delete/);
   assert.match(source, /type:\s*'button'/);
   assert.match(source, /function groupDownloads/);
+  assert.match(source, /function librarySummary/);
+  assert.match(source, /self\.buildLibraries/);
+  assert.match(source, /self\.buildCategory/);
+  assert.match(source, /qbit_media_movies:\s*\{ ru: 'Фильмы'/);
+  assert.match(source, /qbit_media_tv:\s*\{ ru: 'Сериалы'/);
+  assert.match(source, /libraryType === 'movie' \? \(folder \|\| item\.id \|\| item\.name\)/);
   assert.match(source, /function mediaLibraryComponent/);
   assert.match(source, /Lampa\.Component\.add\(COMPONENT_ID, mediaLibraryComponent\)/);
   assert.match(source, /MENU_ACTION = 'qbit_media_downloads'/);

@@ -166,12 +166,15 @@
     return cleanMediaName(base);
   }
 
-  function groupDownloads(items) {
+  function groupDownloads(items, libraryType) {
     var groups = {};
-    (items || []).forEach(function (item) {
-      var folder = item.folder || Lampa.Lang.translate('qbit_media_no_folder');
-      if (!groups[folder]) groups[folder] = [];
-      groups[folder].push(item);
+    (items || []).filter(function (item) {
+      return item.type === libraryType;
+    }).forEach(function (item) {
+      var folder = item.folder || '';
+      var key = libraryType === 'movie' ? (folder || item.id || item.name) : (folder || Lampa.Lang.translate('qbit_media_no_folder'));
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(item);
     });
 
     return Object.keys(groups).sort(function (a, b) {
@@ -185,11 +188,19 @@
       }, 0);
       return {
         folder: folder,
+        libraryType: libraryType,
         files: files,
         size: size,
-        title: guessTitleFromGroup(folder, files)
+        title: libraryType === 'movie' && files.length === 1 ? cleanMediaName(files[0].name) : guessTitleFromGroup(folder, files)
       };
     });
+  }
+
+  function librarySummary(items, type) {
+    var filtered = (items || []).filter(function (item) { return item.type === type; });
+    var size = filtered.reduce(function (total, item) { return total + Number(item.size || 0); }, 0);
+    var groups = groupDownloads(items, type);
+    return { type: type, files: filtered, groups: groups, size: size };
   }
 
   function cacheKey(query) {
@@ -332,6 +343,8 @@
     var html = $('<div class="qbit-media-library"><div class="qbit-media-head"><div class="qbit-media-title">' + Lampa.Lang.translate('qbit_media_open_downloads') + '</div><div class="qbit-media-subtitle">' + Lampa.Lang.translate('qbit_media_loading') + '</div></div><div class="qbit-media-grid"></div></div>');
     var grid = html.find('.qbit-media-grid');
     var last;
+    var libraries = [];
+    var currentLibrary = null;
 
     this.create = function () {
       self.activity.loader(true);
@@ -361,7 +374,14 @@
         down: function () { self.move('down'); },
         left: function () { if (!self.move('left')) Lampa.Controller.toggle('menu'); },
         right: function () { self.move('right'); },
-        back: function () { Lampa.Activity.backward(); }
+        back: function () {
+          if (currentLibrary) {
+            currentLibrary = null;
+            self.buildLibraries(libraries);
+          } else {
+            Lampa.Activity.backward();
+          }
+        }
       });
       Lampa.Controller.toggle(COMPONENT_ID);
     };
@@ -399,13 +419,12 @@
 
     this.load = function () {
       requestGet(bridgeBaseUrl() + '/downloads', function (json) {
-        var groups = groupDownloads(json.items || []);
-        if (!groups.length) return self.empty();
-
-        html.find('.qbit-media-subtitle').text(groups.length + ' ' + Lampa.Lang.translate('qbit_media_items'));
-        loadAllMetadata(groups, function (readyGroups) {
-          self.build(readyGroups);
-        });
+        self.items = json.items || [];
+        var movies = librarySummary(self.items, 'movie');
+        var tv = librarySummary(self.items, 'tv');
+        if (!movies.files.length && !tv.files.length) return self.empty();
+        libraries = [movies, tv];
+        self.buildLibraries(libraries);
       }, function (error) {
         self.error(error);
       });
@@ -423,7 +442,49 @@
       self.activity.toggle();
     };
 
-    this.build = function (groups) {
+    this.buildLibraries = function (libraries) {
+      currentLibrary = null;
+      grid.empty();
+      html.find('.qbit-media-title').text(Lampa.Lang.translate('qbit_media_open_downloads'));
+      html.find('.qbit-media-subtitle').text(Lampa.Lang.translate('qbit_media_choose_library'));
+      last = null;
+
+      libraries.forEach(function (library) {
+        if (!library.files.length) return;
+        var title = Lampa.Lang.translate(library.type === 'movie' ? 'qbit_media_movies' : 'qbit_media_tv');
+        var letter = library.type === 'movie' ? 'Ф' : 'С';
+        var item = $('<div class="qbit-media-card qbit-media-folder selector"><div class="qbit-media-poster"></div><div class="qbit-media-card-title"></div><div class="qbit-media-card-meta"></div></div>');
+        item.find('.qbit-media-poster').append('<div class="qbit-media-poster-fallback">' + letter + '</div>');
+        item.find('.qbit-media-card-title').text(title);
+        item.find('.qbit-media-card-meta').text([library.groups.length + ' ' + Lampa.Lang.translate('qbit_media_items'), library.files.length + ' ' + Lampa.Lang.translate('qbit_media_files'), humanSize(library.size)].join(' · '));
+        item.on('hover:focus hover:touch hover:hover', function () {
+          last = item.get(0);
+          scroll.update(item, true);
+        });
+        item.on('hover:enter', function () {
+          self.buildCategory(library);
+        });
+        grid.append(item);
+      });
+
+      self.activity.loader(false);
+      self.activity.toggle();
+      self.start();
+    };
+
+    this.buildCategory = function (library) {
+      currentLibrary = library;
+      self.activity.loader(true);
+      html.find('.qbit-media-title').text(Lampa.Lang.translate(library.type === 'movie' ? 'qbit_media_movies' : 'qbit_media_tv'));
+      html.find('.qbit-media-subtitle').text(library.groups.length + ' ' + Lampa.Lang.translate('qbit_media_items'));
+      grid.empty();
+      last = null;
+      loadAllMetadata(library.groups, function (readyGroups) {
+        self.build(readyGroups, library);
+      });
+    };
+
+    this.build = function (groups, library) {
       grid.empty();
       groups.forEach(function (group) {
         var card = group.meta && group.meta.card;
@@ -442,7 +503,7 @@
           scroll.update(item, true);
         });
         item.on('hover:enter', function () {
-          showGroup(group, function () { self.load(); });
+          showGroup(group, function () { self.buildCategory(library); });
         });
         grid.append(item);
       });
@@ -486,6 +547,9 @@
       qbit_media_delete_hint: { ru: 'Удалить файл с диска', en: 'Delete file from disk' },
       qbit_media_files: { ru: 'файлов', en: 'files' },
       qbit_media_items: { ru: 'папок', en: 'items' },
+      qbit_media_movies: { ru: 'Фильмы', en: 'Movies' },
+      qbit_media_tv: { ru: 'Сериалы', en: 'TV Shows' },
+      qbit_media_choose_library: { ru: 'Выберите раздел', en: 'Choose section' },
       qbit_media_no_folder: { ru: 'Без папки', en: 'No folder' },
       qbit_media_loading: { ru: 'Загружаю медиатеку...', en: 'Loading library...' },
       qbit_media_empty: { ru: 'Скачанных видео не найдено', en: 'No downloaded videos found' },

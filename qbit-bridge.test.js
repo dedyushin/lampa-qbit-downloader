@@ -298,6 +298,44 @@ test('bridge lists downloaded video files and streams them with range support', 
   }
 });
 
+test('bridge lists configured movie and tv libraries without mixing generic qBittorrent save path', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-libraries-'));
+  const moviesDir = path.join(tempDir, 'FILMS');
+  const tvDir = path.join(tempDir, 'TV SHOWS');
+  const qbitDir = path.join(tempDir, 'Downloads', 'qBittorrent');
+  fs.mkdirSync(moviesDir, { recursive: true });
+  fs.mkdirSync(tvDir, { recursive: true });
+  fs.mkdirSync(qbitDir, { recursive: true });
+  fs.writeFileSync(path.join(moviesDir, 'Apex.2026.mkv'), 'movie');
+  fs.writeFileSync(path.join(tvDir, 'Show One S01E01.mkv'), 'tv');
+  fs.writeFileSync(path.join(qbitDir, 'Temporary.Mixed.Download.mkv'), 'tmp');
+
+  const bridge = await startBridge({
+    QBIT_ADD_MODE: 'cli',
+    QBIT_BINARY: process.execPath,
+    QBIT_MOVIES_PATH: moviesDir,
+    QBIT_TV_PATH: tvDir,
+    QBIT_SAVE_PATH: qbitDir,
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const listed = await fetch(`http://127.0.0.1:${bridge.port}/downloads`, {
+      headers: { 'X-Bridge-Token': 'test-token' }
+    });
+    assert.equal(listed.status, 200);
+    const json = await listed.json();
+    assert.equal(json.ok, true);
+    assert.equal(json.items.length, 2);
+    assert.ok(json.items.find((item) => item.name === 'Apex.2026.mkv' && item.type === 'movie'));
+    assert.ok(json.items.find((item) => item.name === 'Show One S01E01.mkv' && item.type === 'tv'));
+    assert.equal(json.items.find((item) => item.name === 'Temporary.Mixed.Download.mkv'), undefined);
+  } finally {
+    await bridge.stop();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('bridge deletes downloaded files by id without accepting raw paths', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-delete-'));
   const moviesDir = path.join(tempDir, 'FILMS');
