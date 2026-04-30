@@ -147,18 +147,29 @@
   }
 
   function cleanMediaName(value) {
-    var text = String(value || '')
-      .replace(/\.[a-z0-9]{2,5}$/i, '')
+    var original = String(value || '').replace(/\.[a-z0-9]{2,5}$/i, '').trim();
+    var text = original
       .replace(/\[[^\]]+\]/g, ' ')
-      .replace(/\([^)]*(?:rip|web|dl|hdr|dv|hevc|h\.264|x264|x265|aac|dts|rus|eng)[^)]*\)/ig, ' ')
-      .replace(/\b(S\d{1,2}E\d{1,2}|S\d{1,2}|Season\s*\d+|Episode\s*\d+)\b/ig, ' ')
-      .replace(/\b(19|20)\d{2}\b/g, ' ')
-      .replace(/\b(2160p|1080p|720p|480p|4k|uhd|hdr|hdr10|dv|dolby|vision|web[-_. ]?dl|webrip|bluray|bdrip|hdtv|hevc|h265|h264|x265|x264|aac|dts|truehd|atmos|proper|repack|amzn|nf|itunes|lostfilm|newstudio)\b/ig, ' ')
+      .replace(/\([^)]*\)/g, ' ')
       .replace(/[._-]+/g, ' ')
+      .replace(/[–—]+/g, ' ')
+      .replace(/\bS\d{1,2}E\d{1,2}\b/ig, ' ')
+      .replace(/\bS\d{1,2}\b/ig, ' ')
+      .replace(/\bSeason\s*\d+\b/ig, ' ')
+      .replace(/\bEpisode\s*\d+\b/ig, ' ')
+      .replace(/\b(19|20)\d{2}\b/g, ' ')
+      .replace(/\bDDP?\s*\d+(\s*\d+)?\b/ig, ' ')
+      .replace(/\bDTS\s*HD\b/ig, ' ')
+      .replace(/\bH\s*26[45]\b/ig, ' ')
+      .replace(/\b(HDR10?|HDR|DV|DVT|DoVi|Dolby\s*Vision|HEVC|AVC|REMUX|BDREMUX|BluRay|BDRip|WEB\s*DL|WEBRip|WEB|HDTV|NF|AMZN|MA|MAX|HMAX|ATVP|DSNP|iTunes|RGzsRutracker)\b/ig, ' ')
+      .replace(/\b(2160p|1080p|720p|480p|4K|UHD|x26[45]|Atmos|TrueHD|AAC|AC3|EAC3|DTS|Proper|Repack|Open\s*Matte)\b/ig, ' ')
+      .replace(/\b(Rus|Eng|Ukr|Multi|Sub|Subs|LostFilm|NewStudio|Jaskier|HDRezka)\b/ig, ' ')
+      .replace(/\bH\b/ig, ' ')
+      .replace(/\b\d+\s*\d*\b/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
 
-    return text || String(value || '').replace(/\.[a-z0-9]{2,5}$/i, '').trim();
+    return text || original;
   }
 
   function guessTitleFromGroup(folder, files) {
