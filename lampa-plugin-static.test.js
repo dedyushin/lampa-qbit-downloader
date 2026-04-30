@@ -53,6 +53,11 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /MENU_ACTION = 'qbit_media_downloads'/);
   assert.match(source, /function loadMetadata/);
   assert.match(source, /function bestSearchCard/);
+  assert.match(source, /function posterUrlsFromLibrary/);
+  assert.match(source, /function categoryPosterHtml/);
+  assert.match(source, /qbit-media-collage/);
+  assert.match(source, /movies\.groups\.concat\(tv\.groups\)/);
+  assert.match(source, /categoryPosterHtml\(library, title\)/);
   assert.match(source, /function openLampaCard/);
   assert.match(source, /qbit_media_files:\s*\{ ru: 'файлов'/);
   assert.match(source, /qbit_media_no_folder:\s*\{ ru: 'Без папки'/);

@@ -305,6 +305,33 @@
     return Lampa.TMDB && Lampa.TMDB.image ? Lampa.TMDB.image('t/p/w300/' + String(path).replace(/^\//, '')) : '';
   }
 
+  function escapeAttr(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function posterUrlsFromLibrary(library) {
+    var urls = [];
+    (library.groups || []).forEach(function (group) {
+      var url = group.meta && group.meta.card ? imageUrl(group.meta.card) : '';
+      if (url && urls.indexOf(url) === -1) urls.push(url);
+    });
+    return urls.slice(0, 4);
+  }
+
+  function categoryPosterHtml(library, title) {
+    var posters = posterUrlsFromLibrary(library);
+    if (!posters.length) {
+      return '<div class="qbit-media-folder-fallback"><div class="qbit-media-folder-icon">▦</div><div class="qbit-media-folder-name">' + escapeAttr(title) + '</div></div>';
+    }
+    return '<div class="qbit-media-collage qbit-media-collage--' + posters.length + '">' + posters.map(function (url) {
+      return '<img src="' + escapeAttr(url) + '">';
+    }).join('') + '<div class="qbit-media-collage-shade"></div></div>';
+  }
+
   function openLampaCard(group) {
     if (!group.meta || !group.meta.card) return notify('Карточка Lampa не найдена');
     var card = group.meta.card;
@@ -489,7 +516,9 @@
         var tv = librarySummary(self.items, 'tv');
         if (!movies.files.length && !tv.files.length) return self.empty();
         libraries = [movies, tv];
-        self.buildLibraries(libraries);
+        loadAllMetadata(movies.groups.concat(tv.groups), function () {
+          self.buildLibraries(libraries);
+        });
       }, function (error) {
         self.error(error);
       });
@@ -517,9 +546,8 @@
       libraries.forEach(function (library) {
         if (!library.files.length) return;
         var title = Lampa.Lang.translate(library.type === 'movie' ? 'qbit_media_movies' : 'qbit_media_tv');
-        var letter = library.type === 'movie' ? 'Ф' : 'С';
         var item = $('<div class="qbit-media-card qbit-media-folder selector"><div class="qbit-media-poster"></div><div class="qbit-media-card-title"></div><div class="qbit-media-card-meta"></div></div>');
-        item.find('.qbit-media-poster').append('<div class="qbit-media-poster-fallback">' + letter + '</div>');
+        item.find('.qbit-media-poster').append(categoryPosterHtml(library, title));
         item.find('.qbit-media-card-title').text(title);
         item.find('.qbit-media-card-meta').text([library.groups.length + ' ' + Lampa.Lang.translate('qbit_media_items'), library.files.length + ' ' + Lampa.Lang.translate('qbit_media_files'), humanSize(library.size)].join(' · '));
         item.on('hover:focus hover:touch hover:hover', function () {
@@ -670,6 +698,15 @@
       '.qbit-media-poster{position:relative;width:100%;aspect-ratio:2/3;border-radius:.75em;overflow:hidden;background:linear-gradient(135deg,#29313d,#12151b);}',
       '.qbit-media-poster img{width:100%;height:100%;object-fit:cover;display:block;}',
       '.qbit-media-poster-fallback{height:100%;display:flex;align-items:center;justify-content:center;font-size:4em;font-weight:800;color:rgba(255,255,255,.8);}',
+      '.qbit-media-collage{position:absolute;inset:0;display:grid;grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(2,1fr);gap:.08em;background:#111722;}',
+      '.qbit-media-collage img{width:100%;height:100%;object-fit:cover;display:block;}',
+      '.qbit-media-collage--1{display:block;}',
+      '.qbit-media-collage--2{grid-template-rows:1fr;}',
+      '.qbit-media-collage--3 img:first-child{grid-row:1 / span 2;}',
+      '.qbit-media-collage-shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.18));}',
+      '.qbit-media-folder-fallback{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.5em;background:linear-gradient(135deg,#31445f,#151b27);color:#fff;text-align:center;padding:1em;}',
+      '.qbit-media-folder-icon{font-size:2.4em;line-height:1;opacity:.9;}',
+      '.qbit-media-folder-name{font-size:1.15em;font-weight:800;line-height:1.1;}',
       '.qbit-media-rating{position:absolute;right:.45em;bottom:.45em;background:rgba(0,0,0,.72);border-radius:.35em;padding:.15em .45em;color:#fff;font-size:.95em;font-weight:700;}',
       '.qbit-media-card-title{font-size:1.05em;color:#fff;font-weight:600;margin-top:.7em;line-height:1.18;min-height:2.35em;}',
       '.qbit-media-card-meta{font-size:.82em;color:rgba(255,255,255,.62);line-height:1.25;margin-top:.25em;}',
