@@ -32,7 +32,12 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /\/delete/);
   assert.match(source, /type:\s*'button'/);
   assert.match(source, /function groupDownloads/);
-  assert.match(source, /function showFolderDownloads/);
+  assert.match(source, /function mediaLibraryComponent/);
+  assert.match(source, /Lampa\.Component\.add\(COMPONENT_ID, mediaLibraryComponent\)/);
+  assert.match(source, /MENU_ACTION = 'qbit_media_downloads'/);
+  assert.match(source, /function loadMetadata/);
+  assert.match(source, /function bestSearchCard/);
+  assert.match(source, /function openLampaCard/);
   assert.match(source, /qbit_media_files:\s*\{ ru: 'файлов'/);
   assert.match(source, /qbit_media_no_folder:\s*\{ ru: 'Без папки'/);
   assert.match(source, /qbit_media_bridge_url', 'input', '', 'http:\/\/192\.168\.1\.149:8787'/);
