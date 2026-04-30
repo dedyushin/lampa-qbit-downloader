@@ -153,24 +153,63 @@
     });
   }
 
+  function groupDownloads(items) {
+    var groups = {};
+    (items || []).forEach(function (item) {
+      var folder = item.folder || Lampa.Lang.translate('qbit_media_no_folder');
+      if (!groups[folder]) groups[folder] = [];
+      groups[folder].push(item);
+    });
+    return Object.keys(groups).sort(function (a, b) {
+      return a.localeCompare(b);
+    }).map(function (folder) {
+      var files = groups[folder].sort(function (a, b) {
+        return String(a.name || '').localeCompare(String(b.name || ''));
+      });
+      var size = files.reduce(function (total, item) {
+        return total + Number(item.size || 0);
+      }, 0);
+      return { folder: folder, files: files, size: size };
+    });
+  }
+
+  function showFolderDownloads(group) {
+    Lampa.Select.show({
+      title: group.folder,
+      items: group.files.map(function (item) {
+        return {
+          title: item.name,
+          subtitle: humanSize(item.size),
+          item: item
+        };
+      }),
+      onSelect: function (selected) {
+        showDownloadActions(selected.item);
+      },
+      onBack: function () {
+        showDownloads();
+      }
+    });
+  }
+
   function showDownloads() {
     notify('Загружаю список скачанного...');
     requestGet(bridgeBaseUrl() + '/downloads', function (json) {
-      var items = (json.items || []).map(function (item) {
-        return {
-          title: item.name,
-          subtitle: (item.folder ? item.folder + ' · ' : '') + humanSize(item.size),
-          item: item
-        };
-      });
+      var groups = groupDownloads(json.items || []);
 
-      if (!items.length) return notify('Скачанных видео не найдено');
+      if (!groups.length) return notify('Скачанных видео не найдено');
 
       Lampa.Select.show({
         title: Lampa.Lang.translate('qbit_media_open_downloads'),
-        items: items,
+        items: groups.map(function (group) {
+          return {
+            title: group.folder,
+            subtitle: group.files.length + ' ' + Lampa.Lang.translate('qbit_media_files') + ' · ' + humanSize(group.size),
+            group: group
+          };
+        }),
         onSelect: function (selected) {
-          showDownloadActions(selected.item);
+          showFolderDownloads(selected.group);
         }
       });
     }, function (error) {
@@ -187,7 +226,9 @@
       qbit_media_open_downloads_descr: { ru: 'Открыть скачанные файлы с Mac mini', en: 'Open downloaded files from Mac mini' },
       qbit_media_play: { ru: 'Воспроизвести', en: 'Play' },
       qbit_media_delete: { ru: 'Удалить', en: 'Delete' },
-      qbit_media_delete_hint: { ru: 'Удалить файл с диска', en: 'Delete file from disk' }
+      qbit_media_delete_hint: { ru: 'Удалить файл с диска', en: 'Delete file from disk' },
+      qbit_media_files: { ru: 'файлов', en: 'files' },
+      qbit_media_no_folder: { ru: 'Без папки', en: 'No folder' }
     });
 
     Lampa.SettingsApi.addComponent({
@@ -198,24 +239,21 @@
 
     Lampa.SettingsApi.addParam({
       component: 'qbit_media',
-      param: { name: 'qbit_media_open_downloads', type: 'static' },
+      param: { name: 'qbit_media_open_downloads', type: 'button' },
       field: {
         name: Lampa.Lang.translate('qbit_media_open_downloads'),
         description: Lampa.Lang.translate('qbit_media_open_downloads_descr')
       },
-      onRender: function (item) {
-        item.on('hover:enter', function () {
-          showDownloads();
-        });
+      onChange: function () {
+        showDownloads();
       }
     });
 
     [
-      ['qbit_media_bridge_url', 'input', null, 'http://192.168.1.149:8787'],
-      ['qbit_media_bridge_token', 'input', null, '']
+      ['qbit_media_bridge_url', 'input', '', 'http://192.168.1.149:8787'],
+      ['qbit_media_bridge_token', 'input', '', '']
     ].forEach(function (row) {
-      var param = { name: row[0], type: row[1], default: row[3] };
-      if (row[2]) param.values = row[2];
+      var param = { name: row[0], type: row[1], values: row[2], default: row[3] };
       Lampa.SettingsApi.addParam({
         component: 'qbit_media',
         param: param,

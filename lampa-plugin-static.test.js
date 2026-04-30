@@ -30,5 +30,11 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /\/downloads/);
   assert.match(source, /AndroidJS\.openPlayer/);
   assert.match(source, /\/delete/);
-  assert.match(source, /type:\s*'static'/);
+  assert.match(source, /type:\s*'button'/);
+  assert.match(source, /function groupDownloads/);
+  assert.match(source, /function showFolderDownloads/);
+  assert.match(source, /qbit_media_files:\s*\{ ru: 'файлов'/);
+  assert.match(source, /qbit_media_no_folder:\s*\{ ru: 'Без папки'/);
+  assert.match(source, /qbit_media_bridge_url', 'input', '', 'http:\/\/192\.168\.1\.149:8787'/);
+  assert.match(source, /qbit_media_bridge_token', 'input', '', ''/);
 });
