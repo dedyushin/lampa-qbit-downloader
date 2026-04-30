@@ -42,8 +42,6 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /function showFilesModal/);
   assert.match(source, /Lampa\.Modal\.open/);
   assert.match(source, /torrent-serial selector/);
-  assert.match(source, /qbit-media-files-modal\{display:block!important/);
-  assert.match(source, /torrent-serial\{display:flex!important/);
   assert.match(source, /function loadEpisodeDetails/);
   assert.match(source, /source\.seasons\(group\.meta\.card/);
   assert.match(source, /qbit_media_episode:\s*\{ ru: 'Эпизод'/);

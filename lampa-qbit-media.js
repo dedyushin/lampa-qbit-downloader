@@ -780,19 +780,8 @@
       '.qbit-media-card-title{font-size:1.05em;color:#fff;font-weight:600;margin-top:.7em;line-height:1.18;min-height:2.35em;}',
       '.qbit-media-card-meta{font-size:.82em;color:rgba(255,255,255,.62);line-height:1.25;margin-top:.25em;}',
       '.qbit-media-empty{font-size:1.2em;color:rgba(255,255,255,.7);padding:2em;}',
-      '.qbit-media-files-modal{display:block!important;width:100%;max-width:100%;padding:.25em 0;}',
-      '.qbit-media-files-modal .selector{float:none!important;clear:both;}',
-      '.qbit-media-files-modal .torrent-file{display:flex!important;width:100%!important;max-width:none!important;box-sizing:border-box;margin:0 0 .65em 0!important;}',
-      '.qbit-media-files-modal .torrent-file__title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-      '.qbit-media-files-modal .torrent-serial{display:flex!important;align-items:stretch;width:100%!important;max-width:none!important;height:auto!important;min-height:5.2em;box-sizing:border-box;margin:0 0 .65em 0!important;}',
-      '.qbit-media-files-modal .torrent-serial__img{display:block!important;position:static!important;flex:0 0 7.3em!important;width:7.3em!important;height:4.4em!important;object-fit:cover;margin:.4em .85em .4em .4em;border-radius:.45em;background:linear-gradient(135deg,#29313d,#12151b);}',
-      '.qbit-media-files-modal .torrent-serial__content{position:static!important;display:flex!important;align-items:center;flex:1 1 auto;min-width:0;width:auto!important;}',
-      '.qbit-media-files-modal .torrent-serial__body{flex:1 1 auto;min-width:0;padding-right:1em;}',
-      '.qbit-media-files-modal .torrent-serial__title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-      '.qbit-media-files-modal .torrent-serial__line{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-      '.qbit-media-files-modal .torrent-serial__detail{position:static!important;flex:0 0 auto;display:flex;align-items:center;gap:.55em;}',
-      '.qbit-media-files-modal .torrent-serial__episode{position:static!important;transform:none!important;flex:0 0 2.6em;align-self:stretch;display:flex;align-items:center;justify-content:center;margin-left:.65em;}',
-      '.qbit-media-modal-action{margin-bottom:.75em!important;}'
+      '.qbit-media-files-modal .torrent-serial__img[src=\"\"]{background:linear-gradient(135deg,#29313d,#12151b);}',
+      '.qbit-media-modal-action{margin-bottom:.75em;}'
     ].join('\n');
     document.head.appendChild(style);
   }
