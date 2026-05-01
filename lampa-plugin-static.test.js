@@ -63,6 +63,10 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /Lampa\.Controller\.toggle\(COMPONENT_ID\)/);
   assert.match(source, /restoreMediaController\(\)/);
   assert.match(source, /onBack:\s*function \(\) \{\s*restoreMediaController\(\);\s*\}/);
+  assert.match(source, /function \(direction, items, current\)/);
+  assert.match(source, /sameVisualRow\(active, candidate\) && candidate\.centerX < active\.centerX - 5/);
+  assert.match(source, /if \(!target\) return false;/);
+  assert.match(source, /Lampa\.Controller\.toggle\('menu'\)/);
   assert.match(source, /qbit_media_files:\s*\{ ru: 'файлов'/);
   assert.match(source, /qbit_media_no_folder:\s*\{ ru: 'Без папки'/);
   assert.match(source, /qbit_media_bridge_url', 'input', '', 'http:\/\/192\.168\.1\.149:8787'/);

@@ -492,35 +492,74 @@
       Lampa.Controller.toggle(COMPONENT_ID);
     };
 
-    this.move = function (direction) {
-      var items = grid.find('.selector').toArray();
-      if (!items.length) return false;
-      var current = last || grid.find('.selector.focus').get(0) || items[0];
-      var index = Math.max(0, items.indexOf(current));
-      var target = index;
-      var currentRect = current.getBoundingClientRect();
-
-      if (direction === 'left') target = index - 1;
-      if (direction === 'right') target = index + 1;
-      if (direction === 'up' || direction === 'down') {
-        var candidates = items.map(function (node, i) {
-          var rect = node.getBoundingClientRect();
-          return { node: node, index: i, rect: rect, dx: Math.abs((rect.left + rect.width / 2) - (currentRect.left + currentRect.width / 2)) };
-        }).filter(function (candidate) {
-          return direction === 'up' ? candidate.rect.top < currentRect.top - 5 : candidate.rect.top > currentRect.top + 5;
-        }).sort(function (a, b) {
-          var dyA = Math.abs(a.rect.top - currentRect.top);
-          var dyB = Math.abs(b.rect.top - currentRect.top);
-          return dyA === dyB ? a.dx - b.dx : dyA - dyB;
-        });
-        if (candidates.length) target = candidates[0].index;
-      }
-
-      if (target < 0 || target >= items.length || target === index) return false;
-      last = items[target];
+    this.focusItem = function (node) {
+      if (!node) return false;
+      last = node;
       Lampa.Controller.focus(last);
       scroll.update($(last), true);
       return true;
+    };
+
+    this.cardMetrics = function (items) {
+      return items.map(function (node, i) {
+        var rect = node.getBoundingClientRect();
+        return {
+          node: node,
+          index: i,
+          rect: rect,
+          centerX: rect.left + rect.width / 2,
+          centerY: rect.top + rect.height / 2
+        };
+      });
+    };
+
+    this.sameVisualRow = function (a, b) {
+      if (!a || !b) return false;
+      var tolerance = Math.max(8, Math.min(a.rect.height || 0, b.rect.height || 0) * 0.35);
+      return Math.abs(a.centerY - b.centerY) <= tolerance;
+    };
+
+    this.findMoveTarget = function (direction, items, current) {
+      var metrics = self.cardMetrics(items);
+      var currentIndex = items.indexOf(current);
+      var active = metrics[currentIndex];
+      if (!active) return null;
+
+      var candidates = metrics.filter(function (candidate) {
+        if (candidate.index === active.index) return false;
+        if (direction === 'left') return self.sameVisualRow(active, candidate) && candidate.centerX < active.centerX - 5;
+        if (direction === 'right') return self.sameVisualRow(active, candidate) && candidate.centerX > active.centerX + 5;
+        if (direction === 'up') return candidate.centerY < active.centerY - 5;
+        if (direction === 'down') return candidate.centerY > active.centerY + 5;
+        return false;
+      });
+
+      if (!candidates.length) return null;
+
+      candidates.sort(function (a, b) {
+        if (direction === 'left' || direction === 'right') {
+          var dxA = Math.abs(a.centerX - active.centerX);
+          var dxB = Math.abs(b.centerX - active.centerX);
+          return dxA === dxB ? Math.abs(a.centerY - active.centerY) - Math.abs(b.centerY - active.centerY) : dxA - dxB;
+        }
+
+        var dyA = Math.abs(a.centerY - active.centerY);
+        var dyB = Math.abs(b.centerY - active.centerY);
+        var columnA = Math.abs(a.centerX - active.centerX);
+        var columnB = Math.abs(b.centerX - active.centerX);
+        return dyA === dyB ? columnA - columnB : dyA - dyB;
+      });
+
+      return candidates[0].node;
+    };
+
+    this.move = function (direction) {
+      var items = grid.find('.selector').toArray();
+      if (!items.length) return false;
+      var current = grid.find('.selector.focus').get(0) || last || items[0];
+      var target = self.findMoveTarget(direction, items, current);
+      if (!target) return false;
+      return self.focusItem(target);
     };
 
     this.load = function () {
