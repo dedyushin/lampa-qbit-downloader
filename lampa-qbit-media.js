@@ -106,6 +106,17 @@
     return bridgeBaseUrl() + path;
   }
 
+  function restoreMediaController() {
+    setTimeout(function () {
+      try {
+        var active = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
+        if (active && active.component === COMPONENT_ID && Lampa.Controller && Lampa.Controller.toggle) {
+          Lampa.Controller.toggle(COMPONENT_ID);
+        }
+      } catch (error) {}
+    }, 0);
+  }
+
   function playDownload(item) {
     var url = withToken(absoluteBridgeUrl(item.streamUrl));
     var payload = {
@@ -122,6 +133,8 @@
     } else {
       window.location.href = url;
     }
+
+    restoreMediaController();
   }
 
   function deleteDownload(item, done) {
@@ -425,7 +438,8 @@
         else if (selected.action === 'card') openLampaCard(group);
         else if (selected.action === 'file') showFileActions(selected.file, group, refresh);
         else if (selected.action === 'delete') deleteGroup(group, refresh);
-      }
+      },
+      onBack: function () { restoreMediaController(); }
     });
   }
 

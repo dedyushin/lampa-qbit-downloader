@@ -59,6 +59,10 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /movies\.groups\.concat\(tv\.groups\)/);
   assert.match(source, /categoryPosterHtml\(library, title\)/);
   assert.match(source, /function openLampaCard/);
+  assert.match(source, /function restoreMediaController/);
+  assert.match(source, /Lampa\.Controller\.toggle\(COMPONENT_ID\)/);
+  assert.match(source, /restoreMediaController\(\)/);
+  assert.match(source, /onBack:\s*function \(\) \{\s*restoreMediaController\(\);\s*\}/);
   assert.match(source, /qbit_media_files:\s*\{ ru: 'файлов'/);
   assert.match(source, /qbit_media_no_folder:\s*\{ ru: 'Без папки'/);
   assert.match(source, /qbit_media_bridge_url', 'input', '', 'http:\/\/192\.168\.1\.149:8787'/);
