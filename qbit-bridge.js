@@ -24,7 +24,8 @@ const config = {
   bridgeToken: env.BRIDGE_TOKEN || '',
   addMode: env.QBIT_ADD_MODE || 'auto',
   qbitBinary: env.QBIT_BINARY || '/Applications/qBittorrent.app/Contents/MacOS/qbittorrent',
-  downloadRoots: parseRoots(env.LAMPA_DOWNLOAD_ROOTS || '')
+  downloadRoots: parseRoots(env.LAMPA_DOWNLOAD_ROOTS || ''),
+  mediaStreamBufferBytes: parsePositiveInteger(env.LAMPA_MEDIA_STREAM_BUFFER_BYTES, 4 * 1024 * 1024)
 };
 
 let sid = '';
@@ -38,6 +39,11 @@ function parseRoots(value) {
     .split(path.delimiter)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function defaultDownloadRoots() {
@@ -209,9 +215,10 @@ function streamMedia(req, res, id) {
     res.writeHead(200, corsHeaders({
       'Accept-Ranges': 'bytes',
       'Content-Type': contentType,
-      'Content-Length': stat.size
+      'Content-Length': stat.size,
+      'X-Lampa-Stream-Buffer': String(config.mediaStreamBufferBytes)
     }));
-    return fs.createReadStream(media.filePath).pipe(res);
+    return fs.createReadStream(media.filePath, { highWaterMark: config.mediaStreamBufferBytes }).pipe(res);
   }
 
   const match = String(range).match(/^bytes=(\d*)-(\d*)$/);
@@ -237,9 +244,10 @@ function streamMedia(req, res, id) {
     'Accept-Ranges': 'bytes',
     'Content-Type': contentType,
     'Content-Length': end - start + 1,
-    'Content-Range': `bytes ${start}-${end}/${stat.size}`
+    'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+    'X-Lampa-Stream-Buffer': String(config.mediaStreamBufferBytes)
   }));
-  return fs.createReadStream(media.filePath, { start, end }).pipe(res);
+  return fs.createReadStream(media.filePath, { start, end, highWaterMark: config.mediaStreamBufferBytes }).pipe(res);
 }
 
 function routedContentType(payload) {

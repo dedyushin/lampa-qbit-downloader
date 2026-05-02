@@ -265,6 +265,7 @@ test('bridge lists downloaded video files and streams them with range support', 
     QBIT_ADD_MODE: 'cli',
     QBIT_BINARY: process.execPath,
     LAMPA_DOWNLOAD_ROOTS: `${moviesDir}${path.delimiter}${tvDir}`,
+    LAMPA_MEDIA_STREAM_BUFFER_BYTES: '1048576',
     BRIDGE_TOKEN: 'test-token'
   });
 
@@ -291,6 +292,7 @@ test('bridge lists downloaded video files and streams them with range support', 
     });
     assert.equal(ranged.status, 206);
     assert.equal(ranged.headers.get('content-range'), 'bytes 2-5/16');
+    assert.equal(ranged.headers.get('x-lampa-stream-buffer'), '1048576');
     assert.equal(await ranged.text(), '2345');
   } finally {
     await bridge.stop();
