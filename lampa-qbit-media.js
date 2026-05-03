@@ -677,6 +677,9 @@
     item.on('hover:enter', function () {
       openLibrary();
     });
+    item.on('hover:right', function () {
+      restoreMediaController();
+    });
     body.find('.menu__list:eq(0)').append(item);
   }
 
