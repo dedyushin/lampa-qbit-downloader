@@ -196,6 +196,28 @@ function listDownloads() {
   return items;
 }
 
+function removeEmptyParentDirs(root, filePath) {
+  const resolvedRoot = path.resolve(root);
+  let current = path.dirname(path.resolve(filePath));
+  let removed = 0;
+
+  while (current && current !== resolvedRoot) {
+    const relative = path.relative(resolvedRoot, current);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) break;
+
+    try {
+      fs.rmdirSync(current);
+      removed += 1;
+      current = path.dirname(current);
+    } catch (error) {
+      if (error && (error.code === 'ENOTEMPTY' || error.code === 'EEXIST' || error.code === 'ENOENT')) break;
+      throw error;
+    }
+  }
+
+  return removed;
+}
+
 function contentTypeFor(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.mp4' || ext === '.m4v') return 'video/mp4';
@@ -431,6 +453,7 @@ const server = http.createServer(async (req, res) => {
       if (!payload.id || payload.path) throw new Error('Delete requires media id');
       const media = mediaPathFromId(payload.id);
       fs.rmSync(media.filePath, { force: false });
+      removeEmptyParentDirs(media.root, media.filePath);
       return send(res, 200, { ok: true, deleted: true });
     }
 

@@ -381,3 +381,83 @@ test('bridge deletes downloaded files by id without accepting raw paths', async 
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('bridge removes empty release folders after deleting the last video file', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-delete-empty-folder-'));
+  const tvDir = path.join(tempDir, 'TV SHOWS');
+  const showDir = path.join(tvDir, 'The New Pope');
+  fs.mkdirSync(showDir, { recursive: true });
+  const episodeFile = path.join(showDir, 'The.New.Pope.S01E01.mkv');
+  fs.writeFileSync(episodeFile, 'episode');
+
+  const bridge = await startBridge({
+    QBIT_ADD_MODE: 'cli',
+    QBIT_BINARY: process.execPath,
+    LAMPA_DOWNLOAD_ROOTS: tvDir,
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const listedResponse = await fetch(`http://127.0.0.1:${bridge.port}/downloads`, {
+      headers: { 'X-Bridge-Token': 'test-token' }
+    });
+    assert.equal(listedResponse.status, 200);
+    const listed = await listedResponse.json();
+    const id = listed.items[0].id;
+
+    const deleted = await fetch(`http://127.0.0.1:${bridge.port}/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({ id })
+    });
+    assert.equal(deleted.status, 200);
+    assert.equal(fs.existsSync(episodeFile), false);
+    assert.equal(fs.existsSync(showDir), false, 'empty release folder should be removed');
+    assert.equal(fs.existsSync(tvDir), true, 'library root must never be removed');
+  } finally {
+    await bridge.stop();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('bridge keeps non-empty release folders after deleting one video file', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-delete-non-empty-folder-'));
+  const tvDir = path.join(tempDir, 'TV SHOWS');
+  const showDir = path.join(tvDir, 'The New Pope');
+  fs.mkdirSync(showDir, { recursive: true });
+  const firstEpisode = path.join(showDir, 'The.New.Pope.S01E01.mkv');
+  const secondEpisode = path.join(showDir, 'The.New.Pope.S01E02.mkv');
+  fs.writeFileSync(firstEpisode, 'episode 1');
+  fs.writeFileSync(secondEpisode, 'episode 2');
+
+  const bridge = await startBridge({
+    QBIT_ADD_MODE: 'cli',
+    QBIT_BINARY: process.execPath,
+    LAMPA_DOWNLOAD_ROOTS: tvDir,
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const listedResponse = await fetch(`http://127.0.0.1:${bridge.port}/downloads`, {
+      headers: { 'X-Bridge-Token': 'test-token' }
+    });
+    assert.equal(listedResponse.status, 200);
+    const listed = await listedResponse.json();
+    const first = listed.items.find((item) => item.name === 'The.New.Pope.S01E01.mkv');
+    assert.ok(first);
+
+    const deleted = await fetch(`http://127.0.0.1:${bridge.port}/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({ id: first.id })
+    });
+    assert.equal(deleted.status, 200);
+    assert.equal(fs.existsSync(firstEpisode), false);
+    assert.equal(fs.existsSync(secondEpisode), true);
+    assert.equal(fs.existsSync(showDir), true, 'folder with remaining content must be preserved');
+    assert.equal(fs.existsSync(tvDir), true);
+  } finally {
+    await bridge.stop();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
