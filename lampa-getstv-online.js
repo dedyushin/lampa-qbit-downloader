@@ -4,6 +4,7 @@
   var PLUGIN_ID = 'lampa_getstv_online';
   var MENU_FLAG = '__lampa_getstv_online';
   var MENU_ACTION = 'getstv_online_current';
+  var CARD_BUTTON_CLASS = 'getstv-online-button';
 
   if (window[PLUGIN_ID]) return;
   window[PLUGIN_ID] = true;
@@ -92,13 +93,16 @@
     return String((card && (card.release_date || card.first_air_date || card.year || card.Year)) || '').slice(0, 4);
   }
 
-  function currentQuery() {
-    var card = activeCard();
+  function queryFromCard(card) {
     return {
       card: card,
       title: cardTitle(card),
       year: cardYear(card)
     };
+  }
+
+  function currentQuery() {
+    return queryFromCard(activeCard());
   }
 
   function scoreResult(item, wantedTitle, wantedYear) {
@@ -118,8 +122,8 @@
     });
   }
 
-  function searchCurrentCard() {
-    var query = currentQuery();
+  function searchCurrentCard(card) {
+    var query = card ? queryFromCard(card) : currentQuery();
     if (!query.title) return notify('GETS TV: откройте карточку фильма или сериала');
 
     notify('GETS TV: ищу ' + query.title);
@@ -348,8 +352,50 @@
     addMenuItem();
   }
 
+  function cardFromFullEvent(event) {
+    return (
+      (event && event.data && (event.data.movie || event.data.card)) ||
+      (event && event.object && (event.object.card || event.object.movie)) ||
+      null
+    );
+  }
+
+  function cardButtonHtml() {
+    return '<div class="full-start__button selector view--online ' + CARD_BUTTON_CLASS + '" data-subtitle="GETS TV">' +
+      '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm5 3.5v7l6-3.5-6-3.5Z"/></svg>' +
+      '<span>GETS TV</span>' +
+      '</div>';
+  }
+
+  function addCardButton(event) {
+    if (!event || event.type !== 'complite' || !event.object || !event.object.activity) return;
+
+    var render = event.object.activity.render && event.object.activity.render();
+    if (!render || !render.find) return;
+    if (render.find('.' + CARD_BUTTON_CLASS).length) return;
+
+    var card = cardFromFullEvent(event);
+    var button = $(cardButtonHtml());
+
+    button.on('hover:enter', function () {
+      searchCurrentCard(card);
+    });
+
+    var torrentButton = render.find('.view--torrent').last();
+    if (torrentButton.length) torrentButton.after(button);
+    else {
+      var container = render.find('.buttons--container').last();
+      if (container.length) container.append(button);
+    }
+  }
+
+  function addCardHook() {
+    Lampa.Listener.follow('full', addCardButton);
+  }
+
   ready(function () {
     addSettings();
+    addCardHook();
     patchSelect();
     addMenuHook();
   });
