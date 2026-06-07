@@ -35,6 +35,21 @@
     return cleanUrl(storage('getstv_online_bridge_url', storage('qbit_download_bridge_url', 'http://192.168.1.149:8787')));
   }
 
+  function desktopBridgeFallbackAllowed() {
+    return !/Android|Tizen|WebOS|SmartTV|SMART-TV|TV/i.test(String(navigator.userAgent || ''));
+  }
+
+  function bridgeBaseUrls() {
+    var primary = bridgeBaseUrl();
+    var urls = [primary];
+    if (desktopBridgeFallbackAllowed() && !/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i.test(primary)) {
+      urls.push('http://127.0.0.1:8787');
+    }
+    return urls.filter(function (url, index, list) {
+      return url && list.indexOf(url) === index;
+    });
+  }
+
   function bridgeToken() {
     return storage('getstv_online_bridge_token', storage('qbit_download_bridge_token', ''));
   }
@@ -64,6 +79,22 @@
     }).catch(function (error) {
       fail(error);
     });
+  }
+
+  function requestBridgeGet(path, success, fail) {
+    var urls = bridgeBaseUrls();
+    var index = 0;
+
+    function next(lastError) {
+      if (index >= urls.length) return fail(lastError || new Error('GETS TV bridge недоступен'));
+      requestGet(withToken(cleanUrl(urls[index++]) + path), success, function (error) {
+        var message = String((error && error.message) || error || '');
+        if (index < urls.length && (/failed to fetch|network|load failed/i.test(message) || (error && error.name === 'TypeError'))) next(error);
+        else fail(error);
+      });
+    }
+
+    next();
   }
 
   function titleText(value) {
@@ -127,7 +158,7 @@
     if (!query.title) return notify('GETS TV: откройте карточку фильма или сериала');
 
     notify('GETS TV: ищу ' + query.title);
-    requestGet(withToken(bridgeBaseUrl() + '/getstv/search?q=' + encodeURIComponent(query.title) + '&limit=10'), function (json) {
+    requestBridgeGet('/getstv/search?q=' + encodeURIComponent(query.title) + '&limit=10', function (json) {
       var items = sortResults(json.items || [], query);
       if (!items.length) return notify('GETS TV: ничего не найдено');
       showResults(items, query);
@@ -154,7 +185,7 @@
 
   function loadMovie(item) {
     notify('GETS TV: открываю ' + (titleText(item.title || item.titleText) || 'карточку'));
-    requestGet(withToken(bridgeBaseUrl() + '/getstv/movie/' + encodeURIComponent(item.id)), function (json) {
+    requestBridgeGet('/getstv/movie/' + encodeURIComponent(item.id), function (json) {
       var movie = json.movie || {};
       if (!movie.media || !movie.media.length) return notify('GETS TV: не нашёл варианты воспроизведения');
       showMedia(movie);
@@ -196,10 +227,10 @@
 
   function loadStreams(media, movie) {
     var quality = storage('getstv_online_quality', 'ask');
-    var url = bridgeBaseUrl() + '/getstv/play/' + encodeURIComponent(media.id);
+    var url = '/getstv/play/' + encodeURIComponent(media.id);
     if (quality && quality !== 'ask') url += '?quality=' + encodeURIComponent(quality);
 
-    requestGet(withToken(url), function (json) {
+    requestBridgeGet(url, function (json) {
       var streams = json.streams || (json.stream ? [json.stream] : []);
       if (!streams.length) return notify('GETS TV: потоков нет');
       if (quality && quality !== 'ask') return playStream(json.stream || streams[0], media, movie);
