@@ -2,9 +2,11 @@
   'use strict';
 
   var PLUGIN_ID = 'lampa_getstv_online';
+  var COMPONENT_ID = 'getstv_online_component';
   var MENU_FLAG = '__lampa_getstv_online';
   var MENU_ACTION = 'getstv_online_current';
   var CARD_BUTTON_CLASS = 'getstv-online-button';
+  var componentRegistered = false;
 
   if (window[PLUGIN_ID]) return;
   window[PLUGIN_ID] = true;
@@ -29,6 +31,18 @@
 
   function notify(text) {
     if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(text);
+  }
+
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"']/g, function (symbol) {
+      return {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[symbol];
+    });
   }
 
   function bridgeBaseUrl() {
@@ -134,6 +148,29 @@
 
   function currentQuery() {
     return queryFromCard(activeCard());
+  }
+
+  function originalCardTitle(card) {
+    return titleText(card && (card.original_title || card.original_name || card.title || card.name));
+  }
+
+  function openGetstvSource(card) {
+    card = card || activeCard();
+    var title = cardTitle(card);
+    if (!title) return notify('GETS TV: откройте карточку фильма или сериала');
+
+    registerGetstvComponent();
+
+    Lampa.Activity.push({
+      url: '',
+      title: 'GETS TV',
+      component: COMPONENT_ID,
+      search: title,
+      search_one: title,
+      search_two: originalCardTitle(card),
+      movie: card,
+      page: 1
+    });
   }
 
   function scoreResult(item, wantedTitle, wantedYear) {
@@ -259,6 +296,237 @@
     });
   }
 
+  function addGetstvTemplates() {
+    Lampa.Template.add('getstv_online_item', '<div class="online selector">' +
+      '<div class="online__body">' +
+      '<div style="position:absolute;left:0;top:-0.3em;width:2.4em;height:2.4em">' +
+      '<svg style="height:2.4em;width:2.4em" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+      '<circle cx="64" cy="64" r="56" stroke="white" stroke-width="16"/>' +
+      '<path d="M90.5 64.4 50 87.8V41l40.5 23.4Z" fill="white"/>' +
+      '</svg>' +
+      '</div>' +
+      '<div class="online__title" style="padding-left:2.1em;">{title}</div>' +
+      '<div class="online__quality" style="padding-left:3.4em;">{quality}{info}</div>' +
+      '</div>' +
+      '</div>');
+  }
+
+  function registerGetstvComponent() {
+    if (componentRegistered) return;
+    addGetstvTemplates();
+    Lampa.Component.add(COMPONENT_ID, getstvComponent);
+    componentRegistered = true;
+  }
+
+  function getstvComponent(object) {
+    var component = this;
+    var scroll = new Lampa.Scroll({ mask: true, over: true });
+    var files = new Lampa.Files(object);
+    var filter = new Lampa.Filter(object);
+    var network = { clear: function () {} };
+    var last = false;
+    var lastFilter = false;
+    var selectedResult = null;
+    var searchResults = [];
+
+    scroll.body().addClass('torrent-list');
+
+    function minus() {
+      scroll.minus(window.innerWidth > 580 ? false : files.render().find('.files__left'));
+    }
+
+    function resultLabel(item) {
+      return [titleText(item.title || item.titleText), item.year].filter(Boolean).join(' / ');
+    }
+
+    function setFilterState() {
+      filter.set('sort', [{ title: 'GETS TV', source: 'getstv', selected: true }]);
+      filter.chosen('sort', ['GETS TV']);
+
+      if (searchResults.length > 1) {
+        filter.set('filter', searchResults.map(function (item) {
+          return { title: resultLabel(item), subtitle: item.type || '', result: item, selected: selectedResult && selectedResult.id === item.id };
+        }));
+        if (selectedResult) filter.chosen('filter', [resultLabel(selectedResult)]);
+      } else {
+        filter.set('filter', []);
+        filter.chosen('filter', []);
+      }
+    }
+
+    function reset() {
+      last = false;
+      scroll.render().find('.empty').remove();
+      filter.render().detach();
+      scroll.clear();
+      scroll.append(filter.render());
+      setFilterState();
+    }
+
+    function append(item) {
+      item.on('hover:focus', function (event) {
+        last = event.target;
+        scroll.update($(event.target), true);
+      });
+      scroll.append(item);
+    }
+
+    function loading(status) {
+      if (status) component.activity.loader(true);
+      else {
+        component.activity.loader(false);
+        component.activity.toggle();
+      }
+    }
+
+    function empty(message) {
+      var emptyElement = Lampa.Template.get('list_empty');
+      if (message) emptyElement.find('.empty__descr').text(message);
+      scroll.append(emptyElement);
+      loading(false);
+    }
+
+    function renderMedia(movie) {
+      var mediaItems = movie.media || [];
+      reset();
+
+      if (!mediaItems.length) return empty('GETS TV: не нашёл варианты воспроизведения');
+
+      mediaItems.forEach(function (media, index) {
+        var itemData = {
+          title: escapeHtml(mediaTitle(media, index)),
+          quality: escapeHtml(media.quality || media.sourceType || 'BluRay'),
+          info: mediaSubtitle(media) ? ' / ' + escapeHtml(mediaSubtitle(media)) : ''
+        };
+        var item = Lampa.Template.get('getstv_online_item', itemData);
+
+        item.addClass('video--stream');
+        item.on('hover:enter', function () {
+          if (object.movie && object.movie.id && Lampa.Favorite) Lampa.Favorite.add('history', object.movie, 100);
+          loadStreams(media, movie);
+        });
+
+        append(item);
+      });
+
+      loading(false);
+    }
+
+    function loadSelectedMovie(item) {
+      selectedResult = item;
+      reset();
+      loading(true);
+
+      requestBridgeGet('/getstv/movie/' + encodeURIComponent(item.id), function (json) {
+        renderMedia(json.movie || {});
+      }, function (error) {
+        empty('GETS TV: ' + error.message);
+      });
+    }
+
+    this.create = function () {
+      window.addEventListener('resize', minus, false);
+      minus();
+
+      filter.onSearch = function (value) {
+        object.search = value;
+        component.search();
+      };
+
+      filter.onBack = function () {
+        component.start();
+      };
+
+      filter.render().find('.selector').on('hover:focus', function (event) {
+        lastFilter = event.target;
+      });
+
+      filter.onSelect = function (type, item) {
+        if (type === 'filter' && item && item.result) loadSelectedMovie(item.result);
+        else component.start();
+      };
+
+      filter.render().find('.filter--sort span').text('Источник');
+      filter.render().find('.filter--filter span').text('Фильм');
+      filter.render();
+
+      files.append(scroll.render());
+      scroll.append(filter.render());
+
+      this.search();
+
+      return this.render();
+    };
+
+    this.search = function () {
+      loading(true);
+      reset();
+
+      var query = object.search || object.search_one || cardTitle(object.movie);
+      requestBridgeGet('/getstv/search?q=' + encodeURIComponent(query) + '&limit=10', function (json) {
+        searchResults = sortResults(json.items || [], { title: query, year: cardYear(object.movie) });
+        if (!searchResults.length) return empty('GETS TV: по запросу (' + query + ') нет результатов');
+        loadSelectedMovie(searchResults[0]);
+      }, function (error) {
+        empty('GETS TV: ' + error.message);
+      });
+    };
+
+    this.start = function () {
+      if (Lampa.Activity.active().activity !== component.activity) return;
+
+      Lampa.Background.immediately(Lampa.Utils.cardImgBackground(object.movie));
+
+      Lampa.Controller.add('content', {
+        toggle: function () {
+          Lampa.Controller.collectionSet(scroll.render(), files.render());
+          Lampa.Controller.collectionFocus(last || scroll.render().find('.selector').eq(3)[0] || false, scroll.render());
+        },
+        up: function () {
+          if (Navigator.canmove('up')) {
+            if (scroll.render().find('.selector').slice(3).index(last) === 0 && lastFilter) {
+              Lampa.Controller.collectionFocus(lastFilter, scroll.render());
+            } else Navigator.move('up');
+          } else Lampa.Controller.toggle('head');
+        },
+        down: function () {
+          Navigator.move('down');
+        },
+        right: function () {
+          if (Navigator.canmove('right')) Navigator.move('right');
+          else filter.show('Фильтр', 'filter');
+        },
+        left: function () {
+          if (Navigator.canmove('left')) Navigator.move('left');
+          else Lampa.Controller.toggle('menu');
+        },
+        back: this.back
+      });
+
+      Lampa.Controller.toggle('content');
+    };
+
+    this.render = function () {
+      return files.render();
+    };
+
+    this.back = function () {
+      Lampa.Activity.backward();
+    };
+
+    this.pause = function () {};
+    this.stop = function () {};
+
+    this.destroy = function () {
+      window.removeEventListener('resize', minus);
+      network.clear();
+      files.destroy();
+      scroll.destroy();
+      filter.destroy();
+      network = null;
+    };
+  }
+
   function playStream(stream, media, movie) {
     if (!stream || !stream.url) return notify('GETS TV: нет ссылки на поток');
     var title = titleText(movie.title || movie.titleText) || media.trName || 'GETS TV';
@@ -302,7 +570,7 @@
         description: Lampa.Lang.translate('getstv_online_current_descr')
       },
       onChange: function () {
-        searchCurrentCard();
+        openGetstvSource();
       }
     });
 
@@ -352,7 +620,7 @@
       if (params && params.items && params.items.some(function (item) { return item && item[MENU_FLAG]; })) {
         params.onSelect = function (item) {
           if (item && item[MENU_FLAG]) {
-            searchCurrentCard();
+            openGetstvSource();
             return;
           }
           if (onSelect) onSelect.apply(this, arguments);
@@ -373,7 +641,7 @@
     var icon = '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm4 3v8l7-4-7-4Z"/></svg>';
     var item = $('<li class="menu__item selector" data-action="' + MENU_ACTION + '"><div class="menu__ico">' + icon + '</div><div class="menu__text">' + Lampa.Lang.translate('getstv_online_title') + '</div></li>');
     item.on('hover:enter', function () {
-      searchCurrentCard();
+      openGetstvSource();
     });
     body.find('.menu__list:eq(0)').append(item);
   }
@@ -409,7 +677,7 @@
     var button = $(cardButtonHtml());
 
     button.on('hover:enter', function () {
-      searchCurrentCard(card);
+      openGetstvSource(card);
     });
 
     var torrentButton = render.find('.view--torrent').last();
@@ -426,6 +694,7 @@
 
   ready(function () {
     addSettings();
+    registerGetstvComponent();
     addCardHook();
     patchSelect();
     addMenuHook();
