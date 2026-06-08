@@ -8,7 +8,8 @@ const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 8790);
 const pluginFiles = new Map([
   ['/lampa-qbit-download.js', path.join(__dirname, 'lampa-qbit-download.js')],
-  ['/lampa-qbit-media.js', path.join(__dirname, 'lampa-qbit-media.js')]
+  ['/lampa-qbit-media.js', path.join(__dirname, 'lampa-qbit-media.js')],
+  ['/lampa-getstv-online.js', path.join(__dirname, 'lampa-getstv-online.js')]
 ]);
 
 function send(res, status, body, headers = {}) {
@@ -40,7 +41,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Serving Lampa plugins at http://${host}:${port}/lampa-qbit-download.js and /lampa-qbit-media.js`);
+  console.log(`Serving Lampa plugins at http://${host}:${port}/lampa-qbit-download.js, /lampa-qbit-media.js and /lampa-getstv-online.js`);
 });
 
 server.on('error', (error) => {

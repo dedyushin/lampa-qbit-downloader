@@ -4,6 +4,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
+const { createGetstvClient } = require('./getstv-client');
 
 const env = process.env;
 const config = {
@@ -29,6 +30,7 @@ const config = {
 };
 
 let sid = '';
+let getstvClient = null;
 
 function trimRight(value) {
   return String(value).replace(/\/+$/, '');
@@ -68,6 +70,13 @@ function send(res, status, body) {
     'Content-Length': Buffer.byteLength(data)
   }));
   res.end(data);
+}
+
+function getGetstvClient() {
+  if (!getstvClient) {
+    getstvClient = createGetstvClient({ cwd: __dirname });
+  }
+  return getstvClient;
 }
 
 function readJson(req) {
@@ -226,6 +235,28 @@ function contentTypeFor(filePath) {
   return 'video/x-matroska';
 }
 
+function pipeMediaStream(req, res, filePath, options = {}) {
+  const stream = fs.createReadStream(filePath, {
+    ...options,
+    highWaterMark: config.mediaStreamBufferBytes
+  });
+
+  const cleanup = () => {
+    if (!stream.destroyed) stream.destroy();
+  };
+
+  req.on('aborted', cleanup);
+  res.on('close', cleanup);
+  stream.on('error', (error) => {
+    if (!res.headersSent) {
+      res.writeHead(500, corsHeaders({ 'Content-Type': 'application/json' }));
+    }
+    res.destroy(error);
+  });
+
+  return stream.pipe(res);
+}
+
 function streamMedia(req, res, id) {
   const media = mediaPathFromId(id);
   const stat = fs.statSync(media.filePath);
@@ -240,7 +271,7 @@ function streamMedia(req, res, id) {
       'Content-Length': stat.size,
       'X-Lampa-Stream-Buffer': String(config.mediaStreamBufferBytes)
     }));
-    return fs.createReadStream(media.filePath, { highWaterMark: config.mediaStreamBufferBytes }).pipe(res);
+    return pipeMediaStream(req, res, media.filePath);
   }
 
   const match = String(range).match(/^bytes=(\d*)-(\d*)$/);
@@ -269,7 +300,7 @@ function streamMedia(req, res, id) {
     'Content-Range': `bytes ${start}-${end}/${stat.size}`,
     'X-Lampa-Stream-Buffer': String(config.mediaStreamBufferBytes)
   }));
-  return fs.createReadStream(media.filePath, { start, end, highWaterMark: config.mediaStreamBufferBytes }).pipe(res);
+  return pipeMediaStream(req, res, media.filePath, { start, end });
 }
 
 function routedContentType(payload) {
@@ -440,6 +471,42 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/downloads') {
       if (!isAuthorized(req, url)) return send(res, 401, { ok: false, error: 'Unauthorized' });
       return send(res, 200, { ok: true, items: listDownloads() });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/getstv/search') {
+      if (!isAuthorized(req, url)) return send(res, 401, { ok: false, error: 'Unauthorized' });
+      const query = url.searchParams.get('q') || url.searchParams.get('query') || url.searchParams.get('title') || '';
+      const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 10), 1), 30);
+      if (!query.trim()) throw new Error('GETS TV search requires query');
+      const items = await getGetstvClient().search(query, { limit });
+      return send(res, 200, { ok: true, items });
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith('/getstv/movie/')) {
+      if (!isAuthorized(req, url)) return send(res, 401, { ok: false, error: 'Unauthorized' });
+      const id = decodeURIComponent(url.pathname.slice('/getstv/movie/'.length));
+      if (!id) throw new Error('GETS TV movie id is required');
+      const movie = await getGetstvClient().movie(id);
+      return send(res, 200, { ok: true, movie });
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith('/getstv/media/')) {
+      if (!isAuthorized(req, url)) return send(res, 401, { ok: false, error: 'Unauthorized' });
+      const id = decodeURIComponent(url.pathname.slice('/getstv/media/'.length));
+      if (!id) throw new Error('GETS TV media id is required');
+      const media = await getGetstvClient().media(id);
+      return send(res, 200, { ok: true, ...media });
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith('/getstv/play/')) {
+      if (!isAuthorized(req, url)) return send(res, 401, { ok: false, error: 'Unauthorized' });
+      const id = decodeURIComponent(url.pathname.slice('/getstv/play/'.length));
+      const preferredQuality = url.searchParams.get('quality') || 'auto';
+      if (!id) throw new Error('GETS TV media id is required');
+      const media = await getGetstvClient().media(id);
+      const stream = getGetstvClient().bestStream(media.streams, preferredQuality);
+      if (!stream) throw new Error('GETS TV media has no playable HLS streams');
+      return send(res, 200, { ok: true, media: media.media, stream, streams: media.streams });
     }
 
     if (req.method === 'GET' && url.pathname.startsWith('/media/')) {

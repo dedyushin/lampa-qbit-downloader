@@ -7,6 +7,7 @@
   var MENU_ACTION = 'getstv_online_current';
   var CARD_BUTTON_CLASS = 'getstv-online-button';
   var componentRegistered = false;
+  var lastKnownCard = null;
 
   if (window[PLUGIN_ID]) return;
   window[PLUGIN_ID] = true;
@@ -116,17 +117,43 @@
     return value.ru || value.en || value.original || value.name || '';
   }
 
+  function titleValues(value) {
+    if (!value) return [];
+    if (typeof value !== 'object') return [String(value || '')];
+    return [value.ru, value.en, value.original, value.name].filter(Boolean).map(function (item) {
+      return String(item || '');
+    });
+  }
+
+  function unique(values) {
+    var seen = {};
+    return values.map(function (item) {
+      return String(item || '').trim();
+    }).filter(function (item) {
+      var key = item.toLowerCase();
+      if (!item || seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+  }
+
+  function rememberCard(card) {
+    if (card && typeof card === 'object') lastKnownCard = card;
+    return card || null;
+  }
+
   function activeCard() {
     try {
       var active = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
       var activity = active && (active.activity || active);
-      return (
+      var card = (
         (activity && (activity.card || activity.object || activity.movie)) ||
         (active && (active.card || active.object || active.movie)) ||
         null
       );
+      return rememberCard(card) || lastKnownCard;
     } catch (error) {
-      return null;
+      return lastKnownCard;
     }
   }
 
@@ -154,8 +181,30 @@
     return titleText(card && (card.original_title || card.original_name || card.title || card.name));
   }
 
+  function queryCandidates(card, preferred) {
+    var values = [];
+    if (preferred) values.push(preferred);
+    if (card) {
+      values = values.concat(
+        titleValues(card.title),
+        titleValues(card.name),
+        titleValues(card.original_title),
+        titleValues(card.original_name),
+        titleValues(card.Title),
+        titleValues(card.Name)
+      );
+      if (card.names && card.names.length) values = values.concat(card.names);
+      if (card.alternative_titles && card.alternative_titles.titles) {
+        card.alternative_titles.titles.forEach(function (item) {
+          values.push(item && item.title);
+        });
+      }
+    }
+    return unique(values.length ? values : [cardTitle(card)]);
+  }
+
   function openGetstvSource(card) {
-    card = card || activeCard();
+    card = rememberCard(card || activeCard());
     var title = cardTitle(card);
     if (!title) return notify('GETS TV: откройте карточку фильма или сериала');
 
@@ -262,8 +311,8 @@
     });
   }
 
-  function loadStreams(media, movie) {
-    var quality = storage('getstv_online_quality', 'ask');
+  function loadStreams(media, movie, requestedQuality) {
+    var quality = requestedQuality || storage('getstv_online_quality', 'auto');
     var url = '/getstv/play/' + encodeURIComponent(media.id);
     if (quality && quality !== 'ask') url += '?quality=' + encodeURIComponent(quality);
 
@@ -328,6 +377,23 @@
     var lastFilter = false;
     var selectedResult = null;
     var searchResults = [];
+    var currentMovie = null;
+    var currentMedia = [];
+    var translations = [];
+    var seasons = [];
+    var selectedTranslation = '';
+    var selectedSeason = null;
+    var selectedQuality = storage('getstv_online_quality', 'auto');
+
+    var qualityItems = [
+      { title: 'Лучшее', quality: 'auto' },
+      { title: '1080p', quality: '1080' },
+      { title: '720p', quality: '720' },
+      { title: '480p', quality: '480' },
+      { title: '360p', quality: '360' },
+      { title: '240p', quality: '240' },
+      { title: 'Спросить', quality: 'ask' }
+    ];
 
     scroll.body().addClass('torrent-list');
 
@@ -339,19 +405,91 @@
       return [titleText(item.title || item.titleText), item.year].filter(Boolean).join(' / ');
     }
 
-    function setFilterState() {
-      filter.set('sort', [{ title: 'GETS TV', source: 'getstv', selected: true }]);
-      filter.chosen('sort', ['GETS TV']);
+    function translationName(media, index) {
+      return media.trName || media.title || ('Перевод ' + (index + 1));
+    }
 
-      if (searchResults.length > 1) {
-        filter.set('filter', searchResults.map(function (item) {
-          return { title: resultLabel(item), subtitle: item.type || '', result: item, selected: selectedResult && selectedResult.id === item.id };
-        }));
-        if (selectedResult) filter.chosen('filter', [resultLabel(selectedResult)]);
-      } else {
-        filter.set('filter', []);
-        filter.chosen('filter', []);
-      }
+    function preferredTranslation(items) {
+      var names = unique(items.map(function (media, index) {
+        return translationName(media, index);
+      }));
+      return names.find(function (name) { return /^дубляж$/i.test(name); }) ||
+        names.find(function (name) { return /lostfilm/i.test(name); }) ||
+        names[0] ||
+        '';
+    }
+
+    function collectTranslations(items) {
+      return unique(items.map(function (media, index) {
+        return translationName(media, index);
+      }));
+    }
+
+    function seasonValue(media) {
+      var season = media && media.season;
+      if (season === undefined || season === null || season === '') return null;
+      return String(season);
+    }
+
+    function seasonTitle(season) {
+      return season ? 'Сезон ' + season : '';
+    }
+
+    function collectSeasons(items) {
+      return unique(items.map(seasonValue).filter(Boolean)).sort(function (a, b) {
+        return Number(a) - Number(b);
+      });
+    }
+
+    function ensureSeasonButton() {
+      var line = filter.render().find('.filter--sort').parent();
+      if (line.find('.filter--season').length) return;
+
+      var button = $('<div class="simple-button simple-button--filter selector filter--season hide"><span>Сезон</span><div class="hide"></div></div>');
+      button.on('hover:enter', function () {
+        filter.show('Сезон', 'season');
+      });
+      line.find('.filter--sort').after(button);
+    }
+
+    function qualityTitle() {
+      var item = qualityItems.find(function (candidate) {
+        return String(candidate.quality) === String(selectedQuality || 'auto');
+      });
+      return item ? item.title : 'Лучшее';
+    }
+
+    function persistQuality(value) {
+      selectedQuality = value || 'auto';
+      if (Lampa.Storage && Lampa.Storage.set) Lampa.Storage.set('getstv_online_quality', selectedQuality);
+    }
+
+    function setFilterState() {
+      var translatedMedia = currentMedia.filter(function (media, index) {
+        return !selectedTranslation || translationName(media, index) === selectedTranslation;
+      });
+
+      seasons = collectSeasons(translatedMedia);
+      if (seasons.length && seasons.indexOf(String(selectedSeason || '')) === -1) selectedSeason = seasons[0];
+      if (!seasons.length) selectedSeason = null;
+
+      filter.set('sort', translations.map(function (name) {
+        return { title: name, translation: name, selected: name === selectedTranslation };
+      }));
+      filter.chosen('sort', selectedTranslation ? [selectedTranslation] : []);
+
+      filter.set('season', seasons.map(function (season) {
+        return { title: seasonTitle(season), season: season, selected: String(season) === String(selectedSeason || '') };
+      }));
+      filter.chosen('season', selectedSeason ? [seasonTitle(selectedSeason)] : []);
+      filter.render().find('.filter--season')
+        .toggleClass('selector', seasons.length > 1)
+        .toggleClass('hide', seasons.length > 1 ? false : true);
+
+      filter.set('filter', qualityItems.map(function (item) {
+        return { title: item.title, quality: item.quality, selected: String(item.quality) === String(selectedQuality || 'auto') };
+      }));
+      filter.chosen('filter', [qualityTitle()]);
     }
 
     function reset() {
@@ -386,16 +524,42 @@
       loading(false);
     }
 
-    function renderMedia(movie) {
-      var mediaItems = movie.media || [];
-      reset();
+    function visibleMedia() {
+      return currentMedia.filter(function (media, index) {
+        var translationMatch = !selectedTranslation || translationName(media, index) === selectedTranslation;
+        var seasonMatch = !selectedSeason || seasonValue(media) === String(selectedSeason);
+        return translationMatch && seasonMatch;
+      }).sort(function (a, b) {
+        return Number(a.season || 0) - Number(b.season || 0) || Number(a.episode || 0) - Number(b.episode || 0);
+      });
+    }
 
-      if (!mediaItems.length) return empty('GETS TV: не нашёл варианты воспроизведения');
+    function itemTitle(media, index, mediaItems) {
+      if (media.season || media.episode) {
+        return [
+          media.season ? 'Сезон ' + media.season : '',
+          media.episode ? 'Серия ' + media.episode : ''
+        ].filter(Boolean).join(' / ');
+      }
+      return mediaItems.length > 1 ? (media.sourceType || media.quality || 'Смотреть') : 'Смотреть';
+    }
+
+    function renderMedia(movie) {
+      currentMovie = movie;
+      currentMedia = movie.media || [];
+      translations = collectTranslations(currentMedia);
+      if (!selectedTranslation || translations.indexOf(selectedTranslation) === -1) selectedTranslation = preferredTranslation(currentMedia);
+
+      reset();
+      var mediaItems = visibleMedia();
+
+      if (!currentMedia.length) return empty('GETS TV: не нашёл варианты воспроизведения');
+      if (!mediaItems.length) return empty('GETS TV: нет вариантов для выбранного перевода');
 
       mediaItems.forEach(function (media, index) {
         var itemData = {
-          title: escapeHtml(mediaTitle(media, index)),
-          quality: escapeHtml(media.quality || media.sourceType || 'BluRay'),
+          title: escapeHtml(itemTitle(media, index, mediaItems)),
+          quality: escapeHtml(translationName(media, index)),
           info: mediaSubtitle(media) ? ' / ' + escapeHtml(mediaSubtitle(media)) : ''
         };
         var item = Lampa.Template.get('getstv_online_item', itemData);
@@ -403,7 +567,7 @@
         item.addClass('video--stream');
         item.on('hover:enter', function () {
           if (object.movie && object.movie.id && Lampa.Favorite) Lampa.Favorite.add('history', object.movie, 100);
-          loadStreams(media, movie);
+          loadStreams(media, movie, selectedQuality);
         });
 
         append(item);
@@ -437,17 +601,31 @@
         component.start();
       };
 
+      ensureSeasonButton();
+
       filter.render().find('.selector').on('hover:focus', function (event) {
         lastFilter = event.target;
       });
 
       filter.onSelect = function (type, item) {
-        if (type === 'filter' && item && item.result) loadSelectedMovie(item.result);
-        else component.start();
+        if (type === 'sort' && item && item.translation) {
+          selectedTranslation = item.translation;
+          selectedSeason = null;
+          renderMedia(currentMovie || {});
+        } else if (type === 'season' && item && item.season) {
+          selectedSeason = item.season;
+          renderMedia(currentMovie || {});
+        } else if (type === 'filter' && item && item.quality) {
+          persistQuality(item.quality);
+          renderMedia(currentMovie || {});
+        } else {
+          component.start();
+        }
       };
 
-      filter.render().find('.filter--sort span').text('Источник');
-      filter.render().find('.filter--filter span').text('Фильм');
+      filter.render().find('.filter--sort span').text('Перевод');
+      filter.render().find('.filter--season span').text('Сезон');
+      filter.render().find('.filter--filter span').text('Качество');
       filter.render();
 
       files.append(scroll.render());
@@ -462,14 +640,28 @@
       loading(true);
       reset();
 
-      var query = object.search || object.search_one || cardTitle(object.movie);
-      requestBridgeGet('/getstv/search?q=' + encodeURIComponent(query) + '&limit=10', function (json) {
-        searchResults = sortResults(json.items || [], { title: query, year: cardYear(object.movie) });
-        if (!searchResults.length) return empty('GETS TV: по запросу (' + query + ') нет результатов');
-        loadSelectedMovie(searchResults[0]);
-      }, function (error) {
-        empty('GETS TV: ' + error.message);
-      });
+      var candidates = queryCandidates(object.movie, object.search || object.search_one);
+      var index = 0;
+      var lastError = null;
+
+      function next() {
+        var query = candidates[index++];
+        if (!query) {
+          if (lastError) return empty('GETS TV: ' + lastError.message);
+          return empty('GETS TV: по запросу (' + candidates.join(' / ') + ') нет результатов');
+        }
+
+        requestBridgeGet('/getstv/search?q=' + encodeURIComponent(query) + '&limit=15', function (json) {
+          searchResults = sortResults(json.items || [], { title: query, year: cardYear(object.movie) });
+          if (!searchResults.length) return next();
+          loadSelectedMovie(searchResults[0]);
+        }, function (error) {
+          lastError = error;
+          next();
+        });
+      }
+
+      next();
     };
 
     this.start = function () {
@@ -480,11 +672,11 @@
       Lampa.Controller.add('content', {
         toggle: function () {
           Lampa.Controller.collectionSet(scroll.render(), files.render());
-          Lampa.Controller.collectionFocus(last || scroll.render().find('.selector').eq(3)[0] || false, scroll.render());
+          Lampa.Controller.collectionFocus(last || scroll.render().find('.video--stream.selector')[0] || scroll.render().find('.selector').eq(0)[0] || false, scroll.render());
         },
         up: function () {
           if (Navigator.canmove('up')) {
-            if (scroll.render().find('.selector').slice(3).index(last) === 0 && lastFilter) {
+            if (scroll.render().find('.video--stream.selector').index(last) === 0 && lastFilter) {
               Lampa.Controller.collectionFocus(lastFilter, scroll.render());
             } else Navigator.move('up');
           } else Lampa.Controller.toggle('head');
@@ -494,7 +686,7 @@
         },
         right: function () {
           if (Navigator.canmove('right')) Navigator.move('right');
-          else filter.show('Фильтр', 'filter');
+          else filter.show('Качество', 'filter');
         },
         left: function () {
           if (Navigator.canmove('left')) Navigator.move('left');
@@ -577,7 +769,7 @@
     [
       ['getstv_online_bridge_url', 'input', null, 'http://192.168.1.149:8787'],
       ['getstv_online_bridge_token', 'input', null, ''],
-      ['getstv_online_quality', 'select', { ask: 'Спрашивать', auto: 'Лучшее', 1080: '1080p', 720: '720p', 480: '480p', 360: '360p', 240: '240p' }, 'ask']
+      ['getstv_online_quality', 'select', { auto: 'Лучшее', 1080: '1080p', 720: '720p', 480: '480p', 360: '360p', 240: '240p', ask: 'Спрашивать' }, 'auto']
     ].forEach(function (row) {
       var param = { name: row[0], type: row[1], default: row[3] };
       if (row[2]) param.values = row[2];
@@ -673,7 +865,7 @@
     if (!render || !render.find) return;
     if (render.find('.' + CARD_BUTTON_CLASS).length) return;
 
-    var card = cardFromFullEvent(event);
+    var card = rememberCard(cardFromFullEvent(event));
     var button = $(cardButtonHtml());
 
     button.on('hover:enter', function () {

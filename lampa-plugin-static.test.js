@@ -73,3 +73,76 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /qbit_media_bridge_url', 'input', '', 'http:\/\/192\.168\.1\.149:8787'/);
   assert.match(source, /qbit_media_bridge_token', 'input', '', ''/);
 });
+
+test('GETS TV online plugin is separate from qBittorrent downloader and uses bridge playback API', () => {
+  const source = pluginSource('lampa-getstv-online.js');
+  assert.match(source, /PLUGIN_ID = 'lampa_getstv_online'/);
+  assert.match(source, /COMPONENT_ID = 'getstv_online_component'/);
+  assert.match(source, /getstv_online_title:\s*\{ ru: 'GETS TV онлайн'/);
+  assert.match(source, /\/getstv\/search/);
+  assert.match(source, /\/getstv\/movie\//);
+  assert.match(source, /\/getstv\/play\//);
+  assert.match(source, /AndroidJS\.openPlayer/);
+  assert.match(source, /getstv_online_quality/);
+  assert.match(source, /Lampa\.SettingsApi\.addComponent/);
+  assert.match(source, /desktopBridgeFallbackAllowed/);
+  assert.match(source, /http:\/\/127\.0\.0\.1:8787/);
+  assert.match(source, /requestBridgeGet/);
+  assert.match(source, /function openGetstvSource/);
+  assert.match(source, /Lampa\.Activity\.push\(\{/);
+  assert.match(source, /component:\s*COMPONENT_ID/);
+  assert.match(source, /Lampa\.Template\.add\('getstv_online_item'/);
+  assert.match(source, /class="online selector"/);
+  assert.match(source, /Lampa\.Component\.add\(COMPONENT_ID, getstvComponent\)/);
+  assert.match(source, /new Lampa\.Files\(object\)/);
+  assert.match(source, /new Lampa\.Filter\(object\)/);
+  assert.match(source, /new Lampa\.Scroll\(\{ mask: true, over: true \}\)/);
+  assert.match(source, /scroll\.body\(\)\.addClass\('torrent-list'\)/);
+  assert.match(source, /filter\.render\(\)\.find\('\.filter--sort span'\)\.text\('Перевод'\)/);
+  assert.match(source, /filter\.render\(\)\.find\('\.filter--season span'\)\.text\('Сезон'\)/);
+  assert.match(source, /filter\.render\(\)\.find\('\.filter--filter span'\)\.text\('Качество'\)/);
+  assert.match(source, /selectedQuality = storage\('getstv_online_quality', 'auto'\)/);
+  assert.match(source, /function ensureSeasonButton/);
+  assert.match(source, /filter\.show\('Сезон', 'season'\)/);
+  assert.match(source, /selectedSeason/);
+  assert.match(source, /collectSeasons/);
+  assert.match(source, /queryCandidates/);
+  assert.match(source, /lastKnownCard/);
+  assert.match(source, /translationName/);
+  assert.match(source, /visibleMedia/);
+  assert.match(source, /Lampa\.Listener\.follow\('full', addCardButton\)/);
+  assert.match(source, /full-start__button selector view--online/);
+  assert.match(source, /getstv-online-button/);
+  assert.match(source, /\.view--torrent/);
+  assert.match(source, /patchSelect/);
+  assert.doesNotMatch(source, /\/add/);
+  assert.doesNotMatch(source, /qbitAdd/);
+});
+
+test('plugin server exposes the GETS TV plugin file', () => {
+  const source = pluginSource('serve-plugin-only.js');
+  assert.match(source, /lampa-getstv-online\.js/);
+});
+
+test('bridge exposes GETS TV routes through the existing bridge auth surface', () => {
+  const source = pluginSource('qbit-bridge.js');
+  assert.match(source, /require\('\.\/getstv-client'\)/);
+  assert.match(source, /\/getstv\/search/);
+  assert.match(source, /\/getstv\/movie\//);
+  assert.match(source, /\/getstv\/media\//);
+  assert.match(source, /\/getstv\/play\//);
+  assert.match(source, /getGetstvClient\(\)\.search/);
+  assert.match(source, /getGetstvClient\(\)\.bestStream/);
+});
+
+test('GETS TV client flattens serial seasons without exposing raw movie payload', () => {
+  const source = pluginSource('getstv-client.js');
+  assert.match(source, /function serialMedia/);
+  assert.match(source, /raw\?\.seasons/);
+  assert.match(source, /episode\.trs/);
+  assert.match(source, /season: translation\.season \|\| season\.seasonNum/);
+  assert.match(source, /episode: translation\.episode \|\| episode\.episodeNum/);
+  assert.match(source, /function movieMedia/);
+  assert.match(source, /media: movieMedia\(raw \|\| \{\}\)/);
+  assert.doesNotMatch(source, /\n\s*raw,\n\s*media:/);
+});
