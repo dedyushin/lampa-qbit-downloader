@@ -106,6 +106,15 @@ test('GETS TV online plugin is separate from qBittorrent downloader and uses bri
   assert.match(source, /filter\.show\('Сезон', 'season'\)/);
   assert.match(source, /selectedSeason/);
   assert.match(source, /collectSeasons/);
+  assert.match(source, /timelineHash/);
+  assert.match(source, /Lampa\.Timeline\.view/);
+  assert.match(source, /Lampa\.Timeline\.render/);
+  assert.match(source, /Lampa\.Timeline\.details/);
+  assert.match(source, /online_view/);
+  assert.match(source, /preferredSeason/);
+  assert.match(source, /playlistFor/);
+  assert.match(source, /Lampa\.Player\.play/);
+  assert.match(source, /Lampa\.Player\.playlist/);
   assert.match(source, /queryCandidates/);
   assert.match(source, /lastKnownCard/);
   assert.match(source, /translationName/);
