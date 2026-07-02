@@ -1,4 +1,7 @@
 node_modules/
 .env
+.env.getstv
+.getstv-*.json
 .DS_Store
 *.log
+backups/

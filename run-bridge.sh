@@ -3,10 +3,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-if [[ -f .env ]]; then
-  set -a
-  source .env
-  set +a
-fi
+for env_file in .env .env.getstv; do
+  if [[ -f "$env_file" ]]; then
+    set -a
+    source "$env_file"
+    set +a
+  fi
+done
 
 exec /opt/homebrew/bin/node qbit-bridge.js
