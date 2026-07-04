@@ -57,6 +57,12 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /savedMetadataFromFiles/);
   assert.match(source, /group\.meta && group\.meta\.card && !group\.meta\.hint\) return done\(group\)/);
   assert.match(source, /function bestSearchCard/);
+  assert.match(source, /function searchTmdb/);
+  assert.match(source, /Lampa\.Api\.sources\.tmdb\.search/);
+  assert.match(source, /function searchCub/);
+  assert.match(source, /searchTmdb\(query/);
+  assert.match(source, /searchCub\(query/);
+  assert.match(source, /best\.score >= 50/);
   assert.match(source, /function posterUrlsFromLibrary/);
   assert.match(source, /function categoryPosterHtml/);
   assert.match(source, /qbit-media-collage/);

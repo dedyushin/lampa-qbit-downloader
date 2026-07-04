@@ -207,7 +207,7 @@
     var found = null;
     (files || []).some(function (item) {
       if (item.metadata && typeof item.metadata === 'object') {
-        var usable = !!(item.metadata.id || item.metadata.poster_path || item.metadata.profile_path || item.metadata.backdrop_path);
+        var usable = usableMetaCard(item.metadata);
         found = {
           card: item.metadata,
           type: item.metadata.media_type || libraryType || (item.metadata.name ? 'tv' : 'movie'),
@@ -274,6 +274,16 @@
     return String((card && (card.release_date || card.first_air_date)) || '').slice(0, 4);
   }
 
+  function genericCardTitle(card) {
+    var title = String(card && (card.title || card.name || card.original_title || card.original_name || '')).toLowerCase().trim();
+    return /^(торренты|torrent|torrents|детектив|detective|боевик|action|комедия|comedy|драма|drama|мелодрама|триллер|thriller|ужасы|horror|фантастика|sci fi|фэнтези|fantasy|мультфильм|animation|документальный|documentary)$/.test(title);
+  }
+
+  function usableMetaCard(card) {
+    if (!card || typeof card !== 'object' || genericCardTitle(card)) return false;
+    return !!(card.poster_path || card.profile_path || card.backdrop_path || card.original_title || card.original_name || card.release_date || card.first_air_date || card.overview || card.name || card.title);
+  }
+
   function bestSearchCard(groups, group) {
     var best = null;
     var query = group.title;
@@ -282,6 +292,7 @@
 
     (groups || []).forEach(function (resultGroup) {
       (resultGroup.results || []).forEach(function (card) {
+        if (genericCardTitle(card)) return;
         var title = String(card.title || card.name || card.original_title || card.original_name || '').toLowerCase();
         var year = cardYear(card);
         var score = 0;
@@ -291,39 +302,73 @@
         else if (wantedYear && year && year !== wantedYear) score -= 70;
         if (card.poster_path) score += 10;
         if (card.vote_average) score += Number(card.vote_average);
-        if (!best || score > best.score) best = { score: score, card: card, type: resultGroup.type || card.media_type || (card.name ? 'tv' : 'movie') };
+        if (score > 0 && (!best || score > best.score)) best = { score: score, card: card, type: resultGroup.type || card.media_type || (card.name ? 'tv' : 'movie') };
       });
     });
 
-    return best && best.card ? { card: best.card, type: best.type } : null;
+    return best && best.card && best.score >= 50 ? { card: best.card, type: best.type } : null;
+  }
+
+  function searchTmdb(query, done) {
+    try {
+      if (Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.search) {
+        return Lampa.Api.sources.tmdb.search({ query: query }, function (results) {
+          done(results || []);
+        });
+      }
+
+      if (Lampa.Api && Lampa.Api.search) {
+        return Lampa.Api.search({ query: query }, function (result) {
+          done([result.movie, result.tv].filter(Boolean));
+        });
+      }
+    } catch (error) {}
+
+    done(null);
+  }
+
+  function searchCub(query, done) {
+    try {
+      if (!Lampa.Api || !Lampa.Api.sources || !Lampa.Api.sources.cub || !Lampa.Api.sources.cub.discovery) return done(null);
+      var source = Lampa.Api.sources.cub.discovery();
+      source.search({ query: encodeURIComponent(query) }, function (results) {
+        done(results || []);
+      });
+    } catch (error) {
+      done(null);
+    }
   }
 
   function loadMetadata(group, done) {
     if (group.meta && group.meta.card && !group.meta.hint) return done(group);
 
     var query = group.title;
-    if (!query || !Lampa.Api || !Lampa.Api.sources || !Lampa.Api.sources.cub || !Lampa.Api.sources.cub.discovery) return done(group);
+    if (!query || !Lampa.Api) return done(group);
 
     var key = cacheKey(group);
     var cached = Lampa.Storage.get(key, '{}');
-    if (cached && cached.card) {
+    if (cached && cached.card && usableMetaCard(cached.card)) {
       group.meta = cached;
       return done(group);
     }
 
-    try {
-      var source = Lampa.Api.sources.cub.discovery();
-      source.search({ query: encodeURIComponent(query) }, function (results) {
-        var match = bestSearchCard(results, group);
+    searchTmdb(query, function (tmdbResults) {
+      var match = bestSearchCard(tmdbResults, group);
+      if (match) {
+        group.meta = match;
+        Lampa.Storage.set(key, match);
+        return done(group);
+      }
+
+      searchCub(query, function (cubResults) {
+        match = bestSearchCard(cubResults, group);
         if (match) {
           group.meta = match;
           Lampa.Storage.set(key, match);
         }
         done(group);
       });
-    } catch (error) {
-      done(group);
-    }
+    });
   }
 
   function loadAllMetadata(groups, done) {

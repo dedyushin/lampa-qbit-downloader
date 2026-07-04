@@ -213,7 +213,7 @@ function fuzzyTokenIncluded(token, haystackTokens) {
 
 function genericMetadataTitle(metadata) {
   const title = normalizeTitle(metadata && (metadata.title || metadata.name || metadata.original_title || metadata.original_name));
-  return /^(торренты|torrent|torrents)$/.test(title);
+  return /^(торренты|torrent|torrents|детектив|detective|боевик|action|комедия|comedy|драма|drama|мелодрама|триллер|thriller|ужасы|horror|фантастика|sci fi|фэнтези|fantasy|мультфильм|animation|документальный|documentary)$/.test(title);
 }
 
 function metadataStoreTemplate() {
@@ -266,13 +266,9 @@ function sanitizeCardMetadata(metadata) {
 
 function metadataTitles(record) {
   const card = record && record.metadata ? record.metadata : {};
-  return [
-    record && record.title,
-    card.title,
-    card.name,
-    card.original_title,
-    card.original_name
-  ].flatMap((item) => titleVariants(item)).filter(Boolean);
+  const titles = [record && record.title];
+  if (!genericMetadataTitle(card)) titles.push(card.title, card.name, card.original_title, card.original_name);
+  return titles.flatMap((item) => titleVariants(item)).filter(Boolean);
 }
 
 function saveMetadataRecord(payload) {

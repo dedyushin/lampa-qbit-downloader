@@ -310,6 +310,52 @@ test('bridge rejects generic torrent-screen metadata and can match Cyrillic titl
   }
 });
 
+test('bridge does not leak generic genre metadata to unrelated downloaded series', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-generic-metadata-'));
+  const tvDir = path.join(tempDir, 'TV SHOWS');
+  const metadataPath = path.join(tempDir, 'metadata.json');
+  fs.mkdirSync(path.join(tvDir, 'Chyornoe.solnce.S01.2023.WEB-DLip'), { recursive: true });
+  fs.mkdirSync(path.join(tvDir, 'I.Will.Find.You.S01.2160p.DV.HDR'), { recursive: true });
+  fs.writeFileSync(path.join(tvDir, 'Chyornoe.solnce.S01.2023.WEB-DLip', 'Chyornoe.solnce.S01.E01.2023.WEB-DLRip.avi'), 'episode');
+  fs.writeFileSync(path.join(tvDir, 'I.Will.Find.You.S01.2160p.DV.HDR', 'I.Will.Find.You.S01E01.2160p.DV.HDR.mkv'), 'episode');
+  fs.writeFileSync(metadataPath, JSON.stringify({
+    version: 1,
+    records: [{
+      id: 'bad-record',
+      addedAt: new Date().toISOString(),
+      title: 'Черное солнце (1 сезон: 1-12 серии из 12) / 2023 / РУ / WEB-DLRip',
+      contentType: 'tv',
+      metadata: { id: 9648, title: 'детектив', media_type: 'tv', source: 'lampa-card' }
+    }]
+  }, null, 2));
+
+  const bridge = await startBridge({
+    QBIT_ADD_MODE: 'cli',
+    QBIT_BINARY: process.execPath,
+    QBIT_TV_PATH: tvDir,
+    LAMPA_METADATA_PATH: metadataPath,
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const listed = await fetch(`http://127.0.0.1:${bridge.port}/downloads`, {
+      headers: { 'X-Bridge-Token': 'test-token' }
+    });
+    assert.equal(listed.status, 200);
+    const json = await listed.json();
+    const blackSun = json.items.find((entry) => entry.name === 'Chyornoe.solnce.S01.E01.2023.WEB-DLRip.avi');
+    const findYou = json.items.find((entry) => entry.name === 'I.Will.Find.You.S01E01.2160p.DV.HDR.mkv');
+    assert.ok(blackSun);
+    assert.ok(findYou);
+    assert.equal(blackSun.metadata.title, 'Черное солнце');
+    assert.equal(blackSun.metadata.source, 'torrent-title-hint');
+    assert.equal(findYou.metadata, undefined);
+  } finally {
+    await bridge.stop();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('bridge routes movie and tv content to Plex library folders in qBittorrent CLI mode', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-qbit-cli-'));
   const argsFile = path.join(tempDir, 'args.jsonl');

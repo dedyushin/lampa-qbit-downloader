@@ -43,7 +43,7 @@
 
   function looksLikeTorrentScreen(card) {
     var title = asLower(card && (card.title || card.name || card.Title || card.Name || ''));
-    return /^(торренты|torrents?)$/.test(title);
+    return /^(торренты|torrents?|детектив|detective|боевик|action|комедия|comedy|драма|drama|мелодрама|триллер|thriller|ужасы|horror|фантастика|sci fi|фэнтези|fantasy|мультфильм|animation|документальный|documentary)$/.test(title);
   }
 
   function looksLikeContentCard(card) {
@@ -51,19 +51,19 @@
     if (torrentLink(card)) return false;
     if (card.movie || card.card || card.object) return false;
     return !!(
-      card.id ||
-      card.tmdb_id ||
-      card.movie_id ||
       card.poster_path ||
       card.backdrop_path ||
       card.img ||
       card.poster ||
+      card.background_image ||
       card.release_date ||
       card.first_air_date ||
       card.original_title ||
       card.original_name ||
       card.number_of_seasons ||
-      card.number_of_episodes
+      card.number_of_episodes ||
+      card.overview ||
+      card.description
     ) && !!cardTitle(card);
   }
 
