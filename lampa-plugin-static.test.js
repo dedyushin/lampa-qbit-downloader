@@ -15,7 +15,9 @@ test('main Lampa downloader plugin exposes only explicit movie and TV download m
   assert.match(source, /qbit_download_menu_tv:\s*\{ ru: 'Скачать как сериал'/);
   assert.match(source, /contentType:\s*'movie'/);
   assert.match(source, /contentType:\s*'tv'/);
-  assert.match(source, /download\(item\.element, item\.contentType \|\| ''\)/);
+  assert.match(source, /metadataFromCard/);
+  assert.match(source, /metadata:\s*metadataFromCard/);
+  assert.match(source, /download\(item\.element, item\.contentType \|\| '', item\.card \|\| null\)/);
   assert.doesNotMatch(source, /qbit_download_open_downloads/);
   assert.doesNotMatch(source, /AndroidJS\.openPlayer/);
   assert.doesNotMatch(source, /\/downloads/);
@@ -52,6 +54,8 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /Lampa\.Component\.add\(COMPONENT_ID, mediaLibraryComponent\)/);
   assert.match(source, /MENU_ACTION = 'qbit_media_downloads'/);
   assert.match(source, /function loadMetadata/);
+  assert.match(source, /savedMetadataFromFiles/);
+  assert.match(source, /group\.meta && group\.meta\.card\) return done\(group\)/);
   assert.match(source, /function bestSearchCard/);
   assert.match(source, /function posterUrlsFromLibrary/);
   assert.match(source, /function categoryPosterHtml/);
@@ -63,6 +67,10 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /Lampa\.Controller\.toggle\(COMPONENT_ID\)/);
   assert.match(source, /restoreMediaController\(\)/);
   assert.match(source, /onBack:\s*function \(\) \{\s*restoreMediaController\(\);\s*\}/);
+  assert.match(source, /function watchKey/);
+  assert.match(source, /function markWatched/);
+  assert.match(source, /buildEpisodeList/);
+  assert.match(source, /qbit-media-episode-row/);
   assert.match(source, /function \(direction, items, current\)/);
   assert.match(source, /sameVisualRow\(active, candidate\) && candidate\.centerX < active\.centerX - 5/);
   assert.match(source, /if \(!target\) return false;/);

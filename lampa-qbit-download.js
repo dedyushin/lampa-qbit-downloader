@@ -54,6 +54,20 @@
     return '';
   }
 
+  function activeCard() {
+    try {
+      var active = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
+      var activity = active && (active.activity || active);
+      return (
+        (activity && (activity.card || activity.object || activity.movie)) ||
+        (active && (active.card || active.object || active.movie)) ||
+        null
+      );
+    } catch (error) {
+      return null;
+    }
+  }
+
   function inferContentType(element) {
     var fromElement = contentTypeFromObject(element) || contentTypeFromObject(element && element.card) || contentTypeFromObject(element && element.movie);
     if (fromElement) return fromElement;
@@ -65,6 +79,31 @@
     } catch (error) {
       return '';
     }
+  }
+
+  function cardTitle(card) {
+    return card && (card.title || card.name || card.original_title || card.original_name || card.Title || card.Name || '');
+  }
+
+  function metadataFromCard(card, element, contentType) {
+    if (!card || typeof card !== 'object') return null;
+
+    var metadata = {
+      id: card.id || card.tmdb_id || card.movie_id || '',
+      title: card.title || card.name || card.Title || card.Name || '',
+      original_title: card.original_title || card.original_name || '',
+      release_date: card.release_date || card.first_air_date || '',
+      year: card.year || card.Year || '',
+      poster_path: card.poster_path || card.img || card.poster || '',
+      backdrop_path: card.backdrop_path || card.background_image || card.backdrop || '',
+      vote_average: card.vote_average || card.rating || '',
+      overview: card.overview || card.description || '',
+      media_type: contentType || contentTypeFromObject(card) || inferContentType(element),
+      source: 'lampa-card'
+    };
+
+    if (!metadata.title && !metadata.original_title) metadata.title = cardTitle(card);
+    return metadata.title || metadata.original_title || metadata.id || metadata.poster_path ? metadata : null;
   }
 
   function requestJson(url, payload, success, fail) {
@@ -151,13 +190,15 @@
     });
   }
 
-  function sendBridge(element, link, contentType) {
+  function sendBridge(element, link, contentType, card) {
     var baseUrl = cleanUrl(storage('qbit_download_bridge_url', 'http://192.168.1.149:8787'));
+    var type = contentType || inferContentType(element);
     requestJson(baseUrl + '/add', {
       link: link,
       title: element.title || element.Title || '',
       tracker: element.Tracker || element.tracker || '',
-      contentType: contentType || inferContentType(element),
+      contentType: type,
+      metadata: metadataFromCard(card || activeCard(), element, type),
       savePath: storage('qbit_download_savepath', ''),
       category: storage('qbit_download_category', ''),
       tags: storage('qbit_download_tags', 'lampa'),
@@ -170,12 +211,12 @@
     });
   }
 
-  function download(element, contentType) {
+  function download(element, contentType, card) {
     var link = torrentLink(element);
     if (!link) return notify('Не нашёл magnet или ссылку .torrent');
 
     if (storage('qbit_download_mode', 'bridge') === 'direct') sendDirect(element, link);
-    else sendBridge(element, link, contentType);
+    else sendBridge(element, link, contentType, card);
   }
 
   function addSettings() {
@@ -233,7 +274,7 @@
         var onSelect = params.onSelect;
         params.onSelect = function (item) {
           if (item && item[MENU_FLAG]) {
-            download(item.element, item.contentType || '');
+            download(item.element, item.contentType || '', item.card || null);
             return;
           }
           if (onSelect) onSelect.apply(this, arguments);
@@ -251,6 +292,7 @@
         subtitle: event.element.Title || event.element.title || '',
         element: event.element,
         contentType: 'movie',
+        card: event.card || event.movie || activeCard(),
         qbit_download: true,
         __lampa_qbit_download: true
       }, {
@@ -258,6 +300,7 @@
         subtitle: event.element.Title || event.element.title || '',
         element: event.element,
         contentType: 'tv',
+        card: event.card || event.movie || activeCard(),
         qbit_download: true,
         __lampa_qbit_download: true
       });

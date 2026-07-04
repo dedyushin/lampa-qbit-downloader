@@ -3,6 +3,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { createGetstvClient } = require('./getstv-client');
 
@@ -26,7 +27,8 @@ const config = {
   addMode: env.QBIT_ADD_MODE || 'auto',
   qbitBinary: env.QBIT_BINARY || '/Applications/qBittorrent.app/Contents/MacOS/qbittorrent',
   downloadRoots: parseRoots(env.LAMPA_DOWNLOAD_ROOTS || ''),
-  mediaStreamBufferBytes: parsePositiveInteger(env.LAMPA_MEDIA_STREAM_BUFFER_BYTES, 4 * 1024 * 1024)
+  mediaStreamBufferBytes: parsePositiveInteger(env.LAMPA_MEDIA_STREAM_BUFFER_BYTES, 4 * 1024 * 1024),
+  metadataPath: env.LAMPA_METADATA_PATH || path.join(__dirname, '.lampa-metadata.json')
 };
 
 let sid = '';
@@ -128,6 +130,130 @@ function validateTorrentLink(link) {
   throw new Error('Unsupported torrent link. Expected magnet, http or https URL');
 }
 
+function sha1(value) {
+  return crypto.createHash('sha1').update(String(value || '')).digest('hex');
+}
+
+function safeString(value, maxLength = 500) {
+  return String(value || '').trim().slice(0, maxLength);
+}
+
+function normalizeTitle(value) {
+  return safeString(value, 300)
+    .toLowerCase()
+    .replace(/\.[a-z0-9]{2,5}$/i, ' ')
+    .replace(/[._-]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\b(s\d{1,2}e\d{1,3}|s\d{1,2}|season|episode|2160p|1080p|720p|480p|4k|uhd|hdr|dv|dovi|web|webdl|web dl|webrip|bluray|bdrip|remux|hevc|avc|x264|x265|h264|h265)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function metadataStoreTemplate() {
+  return { version: 1, records: [] };
+}
+
+function readMetadataStore() {
+  try {
+    const raw = fs.readFileSync(config.metadataPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.records)) return parsed;
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') console.warn(`Metadata store read failed: ${error.message}`);
+  }
+  return metadataStoreTemplate();
+}
+
+function writeMetadataStore(store) {
+  fs.writeFileSync(config.metadataPath, JSON.stringify(store, null, 2));
+}
+
+function sanitizeCardMetadata(metadata) {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const clean = {};
+  [
+    'id',
+    'title',
+    'name',
+    'original_title',
+    'original_name',
+    'release_date',
+    'first_air_date',
+    'year',
+    'poster_path',
+    'profile_path',
+    'backdrop_path',
+    'vote_average',
+    'overview',
+    'media_type',
+    'source'
+  ].forEach((key) => {
+    if (metadata[key] !== undefined && metadata[key] !== null && metadata[key] !== '') {
+      clean[key] = typeof metadata[key] === 'number' ? metadata[key] : safeString(metadata[key], key === 'overview' ? 1200 : 500);
+    }
+  });
+
+  return Object.keys(clean).length ? clean : null;
+}
+
+function metadataTitles(record) {
+  const card = record && record.metadata ? record.metadata : {};
+  return [
+    record && record.title,
+    card.title,
+    card.name,
+    card.original_title,
+    card.original_name
+  ].map((item) => normalizeTitle(item)).filter(Boolean);
+}
+
+function saveMetadataRecord(payload) {
+  const metadata = sanitizeCardMetadata(payload.metadata);
+  if (!metadata) return false;
+
+  const store = readMetadataStore();
+  const link = payload.link || payload.url || payload.magnet || '';
+  const record = {
+    id: sha1([link, payload.title, Date.now()].join('|')),
+    addedAt: new Date().toISOString(),
+    linkFingerprint: sha1(link),
+    title: safeString(payload.title || metadata.title || metadata.name || metadata.original_title || metadata.original_name, 500),
+    tracker: safeString(payload.tracker, 200),
+    contentType: routedContentType(payload) || safeString(metadata.media_type, 50),
+    savePath: safeString(routedSavePath(payload), 1000),
+    category: safeString(routedCategory(payload), 200),
+    metadata
+  };
+
+  store.records = [record].concat(store.records || []).slice(0, 500);
+  writeMetadataStore(store);
+  return true;
+}
+
+function metadataForDownloadItem(item) {
+  const store = readMetadataStore();
+  const haystack = normalizeTitle([item.folder, item.name].filter(Boolean).join(' '));
+  if (!haystack) return null;
+
+  let best = null;
+  (store.records || []).forEach((record) => {
+    if (record.contentType && item.type && record.contentType !== item.type) return;
+    let score = 0;
+    metadataTitles(record).forEach((title) => {
+      if (!title) return;
+      if (haystack === title) score = Math.max(score, 100);
+      else if (haystack.includes(title) || title.includes(haystack)) score = Math.max(score, 80);
+      else {
+        const parts = title.split(' ').filter((part) => part.length > 2);
+        const matched = parts.filter((part) => haystack.includes(part)).length;
+        if (parts.length && matched >= Math.min(parts.length, 3)) score = Math.max(score, 40 + matched);
+      }
+    });
+    if (score && (!best || score > best.score)) best = { score, metadata: record.metadata };
+  });
+
+  return best ? best.metadata : null;
+}
 
 const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.m4v', '.mov', '.avi', '.webm', '.ts', '.m2ts']);
 
@@ -185,7 +311,7 @@ function walkVideoFiles(root, rootIndex, roots, results, depth = 0) {
     const stat = fs.statSync(fullPath);
     const relativePath = path.relative(roots[rootIndex], fullPath);
     const id = encodeMediaId(rootIndex, relativePath);
-    results.push({
+    const item = {
       id,
       name: entry.name,
       folder: path.dirname(relativePath) === '.' ? '' : path.dirname(relativePath),
@@ -193,7 +319,10 @@ function walkVideoFiles(root, rootIndex, roots, results, depth = 0) {
       modifiedAt: stat.mtime.toISOString(),
       type: rootType(roots[rootIndex]),
       streamUrl: `/media/${encodeURIComponent(id)}`
-    });
+    };
+    const metadata = metadataForDownloadItem(item);
+    if (metadata) item.metadata = metadata;
+    results.push(item);
   }
 }
 
@@ -528,6 +657,7 @@ const server = http.createServer(async (req, res) => {
       if (!isAuthorized(req, url)) return send(res, 401, { ok: false, error: 'Unauthorized' });
       const payload = await readJson(req);
       const result = await qbitAdd(payload);
+      saveMetadataRecord(payload);
       return send(res, 200, result);
     }
 

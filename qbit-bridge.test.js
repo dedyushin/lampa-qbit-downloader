@@ -186,6 +186,63 @@ test('bridge routes movie and tv content to Plex library folders', async () => {
   }
 });
 
+test('bridge preserves Lampa card metadata and exposes it for downloaded files', async () => {
+  const qbit = await startMockQbit();
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-metadata-'));
+  const moviesDir = path.join(tempDir, 'FILMS');
+  const metadataPath = path.join(tempDir, 'metadata.json');
+  fs.mkdirSync(path.join(moviesDir, 'I Will Find You 2026'), { recursive: true });
+  fs.writeFileSync(path.join(moviesDir, 'I.Will.Find.You.2026.2160p.mkv'), 'movie');
+
+  const bridge = await startBridge({
+    QBIT_URL: `http://127.0.0.1:${qbit.port}`,
+    QBIT_USERNAME: 'admin',
+    QBIT_PASSWORD: 'secret',
+    QBIT_MOVIES_PATH: moviesDir,
+    LAMPA_METADATA_PATH: metadataPath,
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const added = await fetch(`http://127.0.0.1:${bridge.port}/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({
+        link: 'magnet:?xt=urn:btih:metadata',
+        title: 'I.Will.Find.You.2026.2160p',
+        contentType: 'movie',
+        metadata: {
+          title: 'Я тебя отыщу',
+          original_title: 'I Will Find You',
+          release_date: '2026-06-18',
+          poster_path: '/poster.jpg',
+          vote_average: 8.3
+        }
+      })
+    });
+    assert.equal(added.status, 200);
+
+    const stored = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    assert.equal(stored.records.length, 1);
+    assert.equal(stored.records[0].metadata.title, 'Я тебя отыщу');
+    assert.equal(stored.records[0].metadata.original_title, 'I Will Find You');
+
+    const listed = await fetch(`http://127.0.0.1:${bridge.port}/downloads`, {
+      headers: { 'X-Bridge-Token': 'test-token' }
+    });
+    assert.equal(listed.status, 200);
+    const json = await listed.json();
+    const item = json.items.find((entry) => entry.name === 'I.Will.Find.You.2026.2160p.mkv');
+    assert.ok(item);
+    assert.equal(item.metadata.title, 'Я тебя отыщу');
+    assert.equal(item.metadata.poster_path, '/poster.jpg');
+  } finally {
+    await bridge.stop();
+    await close(qbit.server);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('bridge routes movie and tv content to Plex library folders in qBittorrent CLI mode', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-qbit-cli-'));
   const argsFile = path.join(tempDir, 'args.jsonl');
