@@ -4,6 +4,7 @@
   var PLUGIN_ID = 'lampa_qbit_media';
   var COMPONENT_ID = 'qbit_media_library';
   var MENU_ACTION = 'qbit_media_downloads';
+  var CARD_BUTTON_CLASS = 'qbit-media-card-button';
 
   if (window[PLUGIN_ID]) return;
   window[PLUGIN_ID] = true;
@@ -99,6 +100,38 @@
       unit += 1;
     }
     return (unit ? value.toFixed(value >= 10 ? 1 : 2) : String(value)) + ' ' + units[unit];
+  }
+
+  function asLower(value) {
+    return String(value || '').toLowerCase();
+  }
+
+  function transliterateCyrillic(value) {
+    var map = {
+      а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'yo', ж: 'zh', з: 'z', и: 'i', й: 'y',
+      к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f',
+      х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya'
+    };
+    return asLower(value).replace(/[а-яё]/g, function (char) { return map[char] || char; });
+  }
+
+  function normalizeMatchText(value) {
+    return transliterateCyrillic(value)
+      .replace(/\.[a-z0-9]{2,5}$/i, ' ')
+      .replace(/[._-]+/g, ' ')
+      .replace(/[^a-z0-9а-яё]+/ig, ' ')
+      .replace(/\b(s\d{1,2}e\d{1,3}|s\d{1,2}|season|episode|2160p|1080p|720p|480p|4k|uhd|hdr|dv|dovi|web|webdl|web dl|webrip|bluray|bdrip|remux|hevc|avc|x264|x265|h264|h265)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function matchVariants(value) {
+    var normalized = normalizeMatchText(value);
+    var variants = [normalized];
+    if (normalized) variants.push(normalized.replace(/yo/g, 'e'));
+    return variants.filter(function (item, index) {
+      return item && variants.indexOf(item) === index;
+    });
   }
 
   function absoluteBridgeUrl(path) {
@@ -490,6 +523,72 @@
     return row.display.subtitle;
   }
 
+  function cardTitle(card) {
+    return card && (card.title || card.name || card.original_title || card.original_name || card.Title || card.Name || '');
+  }
+
+  function cardContentType(card) {
+    if (!card || typeof card !== 'object') return '';
+    var direct = asLower(card.media_type || card.type || card.Type || '');
+    if (/movie|film|фильм|кино/.test(direct)) return 'movie';
+    if (/tv|show|series|serial|episode|сериал|эпизод/.test(direct)) return 'tv';
+    if (card.name || card.original_name || card.first_air_date || card.number_of_seasons || card.number_of_episodes) return 'tv';
+    if (card.title || card.original_title || card.release_date) return 'movie';
+    return '';
+  }
+
+  function cardTitleVariants(card) {
+    var titles = [
+      card && card.title,
+      card && card.name,
+      card && card.original_title,
+      card && card.original_name,
+      card && card.Title,
+      card && card.Name
+    ];
+    var result = [];
+    titles.forEach(function (title) {
+      matchVariants(title).forEach(function (variant) {
+        if (variant.length > 2 && result.indexOf(variant) === -1) result.push(variant);
+      });
+    });
+    return result;
+  }
+
+  function groupMatchHaystack(group) {
+    var parts = [group && group.folder, group && group.title];
+    (group && group.files || []).forEach(function (item) {
+      parts.push(item.name, item.folder);
+      if (item.metadata) {
+        parts.push(item.metadata.title, item.metadata.name, item.metadata.original_title, item.metadata.original_name);
+      }
+    });
+    return matchVariants(parts.filter(Boolean).join(' ')).join(' ');
+  }
+
+  function groupMatchesCard(group, card) {
+    if (!group || !card) return false;
+    var wantedType = cardContentType(card);
+    if (wantedType && group.libraryType && wantedType !== group.libraryType) return false;
+
+    var cardId = String(card.id || card.tmdb_id || card.movie_id || '');
+    if (cardId) {
+      var idMatched = (group.files || []).some(function (item) {
+        var meta = item.metadata || {};
+        var metaId = String(meta.id || meta.tmdb_id || meta.movie_id || '');
+        var metaType = meta.media_type || meta.type || '';
+        return metaId && metaId === cardId && (!wantedType || !metaType || metaType === wantedType);
+      });
+      if (idMatched) return true;
+    }
+
+    var haystack = groupMatchHaystack(group);
+    if (!haystack) return false;
+    return cardTitleVariants(card).some(function (title) {
+      return haystack.indexOf(title) >= 0;
+    });
+  }
+
   function sortedFileRows(group) {
     return group.files.map(function (file) {
       return { file: file, display: fileDisplay(file, group) };
@@ -593,9 +692,11 @@
         right: function () { self.move('right'); },
         back: function () {
           if (currentGroup && currentLibrary) {
+            if (currentLibrary.cardScope) return Lampa.Activity.backward();
             currentGroup = null;
             self.buildCategory(currentLibrary);
           } else if (currentLibrary) {
+            if (currentLibrary.cardScope) return Lampa.Activity.backward();
             currentLibrary = null;
             self.buildLibraries(libraries);
           } else {
@@ -679,6 +780,7 @@
     this.load = function () {
       requestGet(bridgeBaseUrl() + '/downloads', function (json) {
         self.items = json.items || [];
+        if (object && object.card) return self.loadCard(object.card);
         var movies = librarySummary(self.items, 'movie');
         var tv = librarySummary(self.items, 'tv');
         if (!movies.files.length && !tv.files.length) return self.empty();
@@ -691,10 +793,47 @@
       });
     };
 
+    this.loadCard = function (card) {
+      var type = cardContentType(card) || 'movie';
+      var groups = groupDownloads(self.items, type).filter(function (group) {
+        return groupMatchesCard(group, card);
+      });
+      if (!groups.length) return self.emptyCard(card);
+
+      var files = [];
+      var size = 0;
+      groups.forEach(function (group) {
+        group.meta = { card: card, type: type, saved: true };
+        group.title = cardTitle(card) || group.title;
+        files = files.concat(group.files);
+        size += Number(group.size || 0);
+      });
+
+      var library = { type: type, files: files, groups: groups, size: size, cardScope: true, card: card };
+      currentLibrary = library;
+      libraries = [library];
+
+      if (groups.length === 1) self.buildFileList(groups[0], library);
+      else {
+        html.find('.qbit-media-title').text(cardTitle(card) || Lampa.Lang.translate('qbit_media_open_downloads'));
+        html.find('.qbit-media-subtitle').text(groups.length + ' ' + Lampa.Lang.translate('qbit_media_items') + ' · ' + files.length + ' ' + Lampa.Lang.translate('qbit_media_files'));
+        self.build(groups, library);
+      }
+    };
+
     this.empty = function () {
       grid.empty().append('<div class="qbit-media-empty">' + Lampa.Lang.translate('qbit_media_empty') + '</div>');
       self.activity.loader(false);
       self.activity.toggle();
+    };
+
+    this.emptyCard = function (card) {
+      html.find('.qbit-media-title').text(cardTitle(card) || Lampa.Lang.translate('qbit_media_open_downloads'));
+      html.find('.qbit-media-subtitle').text(Lampa.Lang.translate('qbit_media_card_empty'));
+      grid.empty().append('<div class="qbit-media-empty">' + Lampa.Lang.translate('qbit_media_card_empty') + '</div>');
+      self.activity.loader(false);
+      self.activity.toggle();
+      self.start();
     };
 
     this.error = function (error) {
@@ -809,7 +948,12 @@
         last = deleteButton.get(0);
         scroll.update(deleteButton, true);
       });
-      deleteButton.on('hover:enter', function () { deleteGroup(group, function () { self.buildCategory(library); }); });
+      deleteButton.on('hover:enter', function () {
+        deleteGroup(group, function () {
+          if (library && library.cardScope) self.load();
+          else self.buildCategory(library);
+        });
+      });
       tools.append(deleteButton);
       grid.append(tools);
 
@@ -856,6 +1000,62 @@
     });
   }
 
+  function openCardDownloads(card) {
+    if (!card || !cardTitle(card)) return notify('Скачанное: откройте карточку Lampa');
+
+    Lampa.Activity.push({
+      url: '',
+      title: Lampa.Lang.translate('qbit_media_open_downloads'),
+      component: COMPONENT_ID,
+      card: card
+    });
+  }
+
+  function cardFromFullEvent(event) {
+    return (
+      (event && event.data && (event.data.movie || event.data.card)) ||
+      (event && event.object && (event.object.card || event.object.movie)) ||
+      null
+    );
+  }
+
+  function cardButtonHtml() {
+    var title = Lampa.Lang.translate('qbit_media_open_downloads');
+    return '<div class="full-start__button selector view--downloads ' + CARD_BUTTON_CLASS + '" data-subtitle="' + title + '">' +
+      '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v9.2l3.4-3.4 1.4 1.4L11 16 5.2 10.2l1.4-1.4 3.4 3.4V3h2Zm-7 14h14v3H5v-3Z"/></svg>' +
+      '<span>' + title + '</span>' +
+      '</div>';
+  }
+
+  function addCardButton(event) {
+    if (!event || event.type !== 'complite' || !event.object || !event.object.activity) return;
+
+    var render = event.object.activity.render && event.object.activity.render();
+    if (!render || !render.find) return;
+    if (render.find('.' + CARD_BUTTON_CLASS).length) return;
+
+    var card = cardFromFullEvent(event);
+    if (!cardTitle(card)) return;
+
+    var button = $(cardButtonHtml());
+    button.on('hover:enter', function () {
+      openCardDownloads(card);
+    });
+
+    var getstvButton = render.find('.getstv-online-button').last();
+    var torrentButton = render.find('.view--torrent').last();
+    if (getstvButton.length) getstvButton.after(button);
+    else if (torrentButton.length) torrentButton.after(button);
+    else {
+      var container = render.find('.buttons--container').last();
+      if (container.length) container.append(button);
+    }
+  }
+
+  function addCardHook() {
+    Lampa.Listener.follow('full', addCardButton);
+  }
+
   function addMenuItem(event) {
     var body = event && event.body ? event.body : (Lampa.Menu && Lampa.Menu.render && Lampa.Menu.render());
     if (!body || body.find('[data-action="' + MENU_ACTION + '"]').length) return;
@@ -890,6 +1090,7 @@
       qbit_media_no_folder: { ru: 'Без папки', en: 'No folder' },
       qbit_media_loading: { ru: 'Загружаю медиатеку...', en: 'Loading library...' },
       qbit_media_empty: { ru: 'Скачанных видео не найдено', en: 'No downloaded videos found' },
+      qbit_media_card_empty: { ru: 'Для этой карточки скачанные файлы не найдены', en: 'No downloaded files for this card' },
       qbit_media_error: { ru: 'Ошибка загрузки', en: 'Loading error' },
       qbit_media_open_card: { ru: 'Открыть карточку Lampa', en: 'Open Lampa card' },
       qbit_media_episode: { ru: 'Эпизод', en: 'Episode' },
@@ -1000,6 +1201,7 @@
     addStyles();
     addSettings();
     Lampa.Component.add(COMPONENT_ID, mediaLibraryComponent);
+    addCardHook();
     Lampa.Listener.follow('menu', function (event) {
       if (event.type === 'start') addMenuItem(event);
       if (event.type === 'action' && event.action === MENU_ACTION) {

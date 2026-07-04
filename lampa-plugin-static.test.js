@@ -28,6 +28,7 @@ test('main Lampa downloader plugin exposes only explicit movie and TV download m
 test('separate media plugin exposes downloaded files browser actions', () => {
   const source = pluginSource('lampa-qbit-media.js');
   assert.match(source, /PLUGIN_ID = 'lampa_qbit_media'/);
+  assert.match(source, /CARD_BUTTON_CLASS = 'qbit-media-card-button'/);
   assert.match(source, /qbit_media_open_downloads:\s*\{ ru: 'Скачанное'/);
   assert.match(source, /\/downloads/);
   assert.match(source, /AndroidJS\.openPlayer/);
@@ -52,6 +53,12 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /libraryType === 'movie' \? \(folder \|\| item\.id \|\| item\.name\)/);
   assert.match(source, /function mediaLibraryComponent/);
   assert.match(source, /Lampa\.Component\.add\(COMPONENT_ID, mediaLibraryComponent\)/);
+  assert.match(source, /function openCardDownloads/);
+  assert.match(source, /function addCardButton/);
+  assert.match(source, /Lampa\.Listener\.follow\('full', addCardButton\)/);
+  assert.match(source, /function groupMatchesCard/);
+  assert.match(source, /cardScope/);
+  assert.match(source, /qbit_media_card_empty:\s*\{ ru: 'Для этой карточки скачанные файлы не найдены'/);
   assert.match(source, /MENU_ACTION = 'qbit_media_downloads'/);
   assert.match(source, /function loadMetadata/);
   assert.match(source, /savedMetadataFromFiles/);
