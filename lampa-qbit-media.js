@@ -536,6 +536,20 @@
     };
   }
 
+  function episodeLabel(ep) {
+    return Lampa.Lang.translate('qbit_media_season') + ' ' + ep.season + ' · ' + Lampa.Lang.translate('qbit_media_episode') + ' ' + ep.episode;
+  }
+
+  function episodeCode(ep) {
+    return 'S' + ep.season + 'E' + ep.episode;
+  }
+
+  function episodeBadge(item, group) {
+    var ep = episodeInfo(item);
+    if (ep && group && group.libraryType === 'tv') return episodeCode(ep);
+    return group && group.files && group.files.length === 1 ? '1' : '';
+  }
+
   function watchKey(item) {
     return 'qbit_media_watched_' + String((item && item.id) || (item && item.name) || '').replace(/[^a-z0-9а-я]+/ig, '_').slice(0, 120);
   }
@@ -552,8 +566,8 @@
     var ep = episodeInfo(item);
     if (ep && group && group.libraryType === 'tv') {
       return {
-        title: Lampa.Lang.translate('qbit_media_episode') + ' ' + ep.episode,
-        subtitle: Lampa.Lang.translate('qbit_media_season') + ' - ' + ep.season + ' • ' + humanSize(item.size),
+        title: episodeLabel(ep),
+        subtitle: episodeCode(ep) + ' • ' + humanSize(item.size),
         sort: ep.season * 1000 + ep.episode
       };
     }
@@ -574,6 +588,7 @@
 
   function fileOverview(group, row) {
     var card = group && group.meta && group.meta.card;
+    if (row && row.file && group && group.libraryType === 'tv' && episodeInfo(row.file)) return row.display.subtitle;
     if (card && card.overview) return card.overview;
     return row.display.subtitle;
   }
@@ -1018,7 +1033,7 @@
         var ext = String(row.file.name || '').split('.').pop() || '';
         var item = $('<div class="qbit-media-file-row selector"><div class="qbit-media-file-num"></div><div class="qbit-media-file-art"></div><div class="qbit-media-file-body"><div class="qbit-media-file-title"></div><div class="qbit-media-file-subtitle"></div><div class="qbit-media-file-progress"><span></span></div></div><div class="qbit-media-file-side"><div class="qbit-media-file-size"></div><div class="qbit-media-file-ext"></div></div></div>');
         if (watched) item.addClass('qbit-media-file-row--watched');
-        item.find('.qbit-media-file-num').text(watched ? '✓' : String((episodeInfo(row.file) || {}).episode || (group.files.length === 1 ? '1' : '')));
+        item.find('.qbit-media-file-num').text(watched ? '✓' : episodeBadge(row.file, group));
         item.find('.qbit-media-file-art').append(filePreviewHtml(group));
         item.find('.qbit-media-file-title').text(group.files.length === 1 && title ? title : row.display.title);
         item.find('.qbit-media-file-subtitle').text(fileOverview(group, row) + (watched ? ' · ' + Lampa.Lang.translate('qbit_media_watched') : ''));

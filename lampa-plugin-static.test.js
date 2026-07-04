@@ -41,9 +41,15 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /year === wantedYear\) score \+= 80/);
   assert.match(source, /year !== wantedYear\) score -= 70/);
   assert.match(source, /function episodeInfo/);
+  assert.match(source, /function episodeLabel/);
+  assert.match(source, /function episodeCode/);
+  assert.match(source, /function episodeBadge/);
   assert.match(source, /function fileDisplay/);
   assert.match(source, /qbit_media_episode:\s*\{ ru: 'Эпизод'/);
   assert.match(source, /qbit_media_season:\s*\{ ru: 'Сезон'/);
+  assert.match(source, /episodeLabel\(ep\)/);
+  assert.match(source, /episodeCode\(ep\) \+ ' • ' \+ humanSize/);
+  assert.match(source, /group && group\.libraryType === 'tv' && episodeInfo\(row\.file\)/);
   assert.match(source, /ep\.season \* 1000 \+ ep\.episode/);
   assert.match(source, /function librarySummary/);
   assert.match(source, /self\.buildLibraries/);
