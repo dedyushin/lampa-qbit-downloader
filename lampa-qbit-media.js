@@ -207,10 +207,12 @@
     var found = null;
     (files || []).some(function (item) {
       if (item.metadata && typeof item.metadata === 'object') {
+        var usable = !!(item.metadata.id || item.metadata.poster_path || item.metadata.profile_path || item.metadata.backdrop_path);
         found = {
           card: item.metadata,
           type: item.metadata.media_type || libraryType || (item.metadata.name ? 'tv' : 'movie'),
-          saved: true
+          saved: true,
+          hint: !usable
         };
         return true;
       }
@@ -297,7 +299,7 @@
   }
 
   function loadMetadata(group, done) {
-    if (group.meta && group.meta.card) return done(group);
+    if (group.meta && group.meta.card && !group.meta.hint) return done(group);
 
     var query = group.title;
     if (!query || !Lampa.Api || !Lampa.Api.sources || !Lampa.Api.sources.cub || !Lampa.Api.sources.cub.discovery) return done(group);
@@ -341,6 +343,14 @@
     if (!path) return '';
     if (/^https?:\/\//i.test(path)) return path;
     return Lampa.TMDB && Lampa.TMDB.image ? Lampa.TMDB.image('t/p/w300/' + String(path).replace(/^\//, '')) : '';
+  }
+
+  function backdropUrl(card) {
+    if (!card) return '';
+    var path = card.backdrop_path || card.poster_path || card.img || card.poster || '';
+    if (!path) return '';
+    if (/^https?:\/\//i.test(path)) return path;
+    return Lampa.TMDB && Lampa.TMDB.image ? Lampa.TMDB.image('t/p/w500/' + String(path).replace(/^\//, '')) : '';
   }
 
   function escapeAttr(value) {
@@ -419,6 +429,20 @@
       subtitle: humanSize(item.size),
       sort: 999999
     };
+  }
+
+  function filePreviewHtml(group) {
+    var card = group && group.meta && group.meta.card;
+    var url = backdropUrl(card);
+    var title = card ? (card.title || card.name || group.title) : (group && group.title) || '';
+    if (url) return '<div class="qbit-media-file-preview"><img src="' + escapeAttr(url) + '"></div>';
+    return '<div class="qbit-media-file-preview qbit-media-file-preview--fallback">' + escapeAttr(String(title || '?').slice(0, 1).toUpperCase()) + '</div>';
+  }
+
+  function fileOverview(group, row) {
+    var card = group && group.meta && group.meta.card;
+    if (card && card.overview) return card.overview;
+    return row.display.subtitle;
   }
 
   function sortedFileRows(group) {
@@ -637,6 +661,7 @@
     this.buildLibraries = function (libraries) {
       currentLibrary = null;
       currentGroup = null;
+      html.removeClass('qbit-media-library--list');
       grid.empty();
       html.find('.qbit-media-title').text(Lampa.Lang.translate('qbit_media_open_downloads'));
       html.find('.qbit-media-subtitle').text(Lampa.Lang.translate('qbit_media_choose_library'));
@@ -667,6 +692,7 @@
     this.buildCategory = function (library) {
       currentLibrary = library;
       currentGroup = null;
+      html.removeClass('qbit-media-library--list');
       self.activity.loader(true);
       html.find('.qbit-media-title').text(Lampa.Lang.translate(library.type === 'movie' ? 'qbit_media_movies' : 'qbit_media_tv'));
       html.find('.qbit-media-subtitle').text(library.groups.length + ' ' + Lampa.Lang.translate('qbit_media_items'));
@@ -696,8 +722,7 @@
           scroll.update(item, true);
         });
         item.on('hover:enter', function () {
-          if (library.type === 'tv' && group.files.length > 1) self.buildEpisodeList(group, library);
-          else showGroup(group, function () { self.buildCategory(library); });
+          self.buildFileList(group, library);
         });
         grid.append(item);
       });
@@ -707,9 +732,10 @@
       self.start();
     };
 
-    this.buildEpisodeList = function (group, library) {
+    this.buildFileList = function (group, library) {
       currentLibrary = library;
       currentGroup = group;
+      html.addClass('qbit-media-library--list');
       grid.empty();
       last = null;
 
@@ -718,7 +744,7 @@
       html.find('.qbit-media-title').text(title);
       html.find('.qbit-media-subtitle').text(group.files.length + ' ' + Lampa.Lang.translate('qbit_media_files') + ' · ' + humanSize(group.size));
 
-      var tools = $('<div class="qbit-media-episode-tools"></div>');
+      var tools = $('<div class="qbit-media-file-tools"></div>');
       if (group.meta && group.meta.card) {
         var cardButton = $('<div class="qbit-media-tool selector"><div class="qbit-media-tool-title"></div><div class="qbit-media-tool-subtitle"></div></div>');
         cardButton.find('.qbit-media-tool-title').text(Lampa.Lang.translate('qbit_media_open_card'));
@@ -732,7 +758,7 @@
       }
 
       var deleteButton = $('<div class="qbit-media-tool qbit-media-tool--danger selector"><div class="qbit-media-tool-title"></div><div class="qbit-media-tool-subtitle"></div></div>');
-      deleteButton.find('.qbit-media-tool-title').text(Lampa.Lang.translate('qbit_media_delete_all'));
+      deleteButton.find('.qbit-media-tool-title').text(Lampa.Lang.translate(group.files.length > 1 ? 'qbit_media_delete_all' : 'qbit_media_delete'));
       deleteButton.find('.qbit-media-tool-subtitle').text(humanSize(group.size));
       deleteButton.on('hover:focus hover:touch hover:hover', function () {
         last = deleteButton.get(0);
@@ -742,27 +768,28 @@
       tools.append(deleteButton);
       grid.append(tools);
 
-      var list = $('<div class="qbit-media-episode-list"></div>');
+      var list = $('<div class="qbit-media-file-list"></div>');
       sortedFileRows(group).forEach(function (row) {
         var watched = isWatched(row.file);
         var ext = String(row.file.name || '').split('.').pop() || '';
-        var item = $('<div class="qbit-media-episode-row selector"><div class="qbit-media-episode-index"></div><div class="qbit-media-episode-body"><div class="qbit-media-episode-title"></div><div class="qbit-media-episode-subtitle"></div><div class="qbit-media-episode-progress"><span></span></div></div><div class="qbit-media-episode-side"><div class="qbit-media-episode-size"></div><div class="qbit-media-episode-ext"></div></div></div>');
-        if (watched) item.addClass('qbit-media-episode-row--watched');
-        item.find('.qbit-media-episode-index').text(watched ? '✓' : String((episodeInfo(row.file) || {}).episode || ''));
-        item.find('.qbit-media-episode-title').text(row.display.title);
-        item.find('.qbit-media-episode-subtitle').text(row.display.subtitle + (watched ? ' · ' + Lampa.Lang.translate('qbit_media_watched') : ''));
-        item.find('.qbit-media-episode-size').text(humanSize(row.file.size));
-        item.find('.qbit-media-episode-ext').text(ext ? '.' + ext : '');
-        item.find('.qbit-media-episode-progress span').css('width', watched ? '100%' : '0%');
+        var item = $('<div class="qbit-media-file-row selector"><div class="qbit-media-file-num"></div><div class="qbit-media-file-art"></div><div class="qbit-media-file-body"><div class="qbit-media-file-title"></div><div class="qbit-media-file-subtitle"></div><div class="qbit-media-file-progress"><span></span></div></div><div class="qbit-media-file-side"><div class="qbit-media-file-size"></div><div class="qbit-media-file-ext"></div></div></div>');
+        if (watched) item.addClass('qbit-media-file-row--watched');
+        item.find('.qbit-media-file-num').text(watched ? '✓' : String((episodeInfo(row.file) || {}).episode || (group.files.length === 1 ? '1' : '')));
+        item.find('.qbit-media-file-art').append(filePreviewHtml(group));
+        item.find('.qbit-media-file-title').text(group.files.length === 1 && title ? title : row.display.title);
+        item.find('.qbit-media-file-subtitle').text(fileOverview(group, row) + (watched ? ' · ' + Lampa.Lang.translate('qbit_media_watched') : ''));
+        item.find('.qbit-media-file-size').text(humanSize(row.file.size));
+        item.find('.qbit-media-file-ext').text(ext ? '.' + ext : '');
+        item.find('.qbit-media-file-progress span').css('width', watched ? '100%' : '0%');
         item.on('hover:focus hover:touch hover:hover', function () {
           last = item.get(0);
           scroll.update(item, true);
         });
         item.on('hover:enter', function () {
           playDownload(row.file);
-          item.addClass('qbit-media-episode-row--watched');
-          item.find('.qbit-media-episode-index').text('✓');
-          item.find('.qbit-media-episode-progress span').css('width', '100%');
+          item.addClass('qbit-media-file-row--watched');
+          item.find('.qbit-media-file-num').text('✓');
+          item.find('.qbit-media-file-progress span').css('width', '100%');
         });
         list.append(item);
       });
@@ -772,6 +799,8 @@
       self.activity.toggle();
       self.start();
     };
+
+    this.buildEpisodeList = this.buildFileList;
   }
 
   function openLibrary() {
@@ -882,12 +911,29 @@
       '.qbit-media-card-title{font-size:1.05em;color:#fff;font-weight:600;margin-top:.7em;line-height:1.18;min-height:2.35em;}',
       '.qbit-media-card-meta{font-size:.82em;color:rgba(255,255,255,.62);line-height:1.25;margin-top:.25em;}',
       '.qbit-media-empty{font-size:1.2em;color:rgba(255,255,255,.7);padding:2em;}',
-      '.qbit-media-episode-tools{display:flex;gap:1em;margin-bottom:1.15em;}',
+      '.qbit-media-library--list .qbit-media-grid{display:block;}',
+      '.qbit-media-file-tools,.qbit-media-episode-tools{display:flex;gap:1em;margin-bottom:1.15em;max-width:92em;}',
       '.qbit-media-tool{min-width:15em;border-radius:.55em;background:rgba(255,255,255,.06);padding:.75em 1em;transition:.18s background,.18s transform;}',
       '.qbit-media-tool.focus,.qbit-media-tool:hover{background:rgba(255,255,255,.16);transform:scale(1.02);}',
       '.qbit-media-tool--danger{background:rgba(170,50,50,.18);}',
       '.qbit-media-tool-title{font-size:1.08em;color:#fff;font-weight:700;}',
       '.qbit-media-tool-subtitle{font-size:.86em;color:rgba(255,255,255,.58);margin-top:.2em;}',
+      '.qbit-media-file-list{display:flex;flex-direction:column;gap:.9em;max-width:92em;}',
+      '.qbit-media-file-row{display:flex;align-items:stretch;min-height:6.6em;border-radius:.45em;background:rgba(255,255,255,.06);overflow:hidden;transition:.18s background,.18s transform;}',
+      '.qbit-media-file-row.focus,.qbit-media-file-row:hover{background:rgba(255,255,255,.15);transform:scale(1.006);}',
+      '.qbit-media-file-row--watched{opacity:.74;}',
+      '.qbit-media-file-num{width:3.4em;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.36);color:#fff;font-size:1.35em;font-weight:800;flex:0 0 auto;}',
+      '.qbit-media-file-art{width:12.5em;flex:0 0 auto;background:rgba(0,0,0,.18);}',
+      '.qbit-media-file-preview{width:100%;height:100%;min-height:6.6em;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#29313d,#12151b);color:rgba(255,255,255,.8);font-size:2.4em;font-weight:800;overflow:hidden;}',
+      '.qbit-media-file-preview img{width:100%;height:100%;object-fit:cover;display:block;}',
+      '.qbit-media-file-body{flex:1;padding:1em 1.25em .75em 1.25em;min-width:0;}',
+      '.qbit-media-file-title{font-size:1.55em;color:#fff;font-weight:500;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '.qbit-media-file-subtitle{font-size:.98em;color:rgba(255,255,255,.72);margin-top:.52em;line-height:1.25;max-height:2.5em;overflow:hidden;}',
+      '.qbit-media-file-progress{height:.2em;background:rgba(255,255,255,.28);margin-top:.78em;border-radius:1em;overflow:hidden;}',
+      '.qbit-media-file-progress span{display:block;height:100%;background:#d8d8d8;transition:.2s width;}',
+      '.qbit-media-file-side{width:8em;padding:.9em 1em;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:.35em;color:#fff;flex:0 0 auto;}',
+      '.qbit-media-file-size{font-size:1.05em;background:rgba(255,255,255,.1);border-radius:.35em;padding:.18em .45em;white-space:nowrap;}',
+      '.qbit-media-file-ext{font-size:1.08em;font-weight:700;color:rgba(255,255,255,.84);}',
       '.qbit-media-episode-list{display:flex;flex-direction:column;gap:.8em;max-width:60em;}',
       '.qbit-media-episode-row{display:flex;align-items:stretch;min-height:5.6em;border-radius:.45em;background:rgba(255,255,255,.045);overflow:hidden;transition:.18s background,.18s transform;}',
       '.qbit-media-episode-row.focus,.qbit-media-episode-row:hover{background:rgba(255,255,255,.14);transform:scale(1.01);}',

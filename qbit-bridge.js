@@ -149,6 +149,73 @@ function normalizeTitle(value) {
     .trim();
 }
 
+function transliterateCyrillic(value) {
+  const map = {
+    а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'yo', ж: 'zh', з: 'z', и: 'i', й: 'y',
+    к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f',
+    х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya'
+  };
+  return String(value || '').toLowerCase().replace(/[а-яё]/g, (char) => map[char] || char);
+}
+
+function titleVariants(value) {
+  const normalized = normalizeTitle(value);
+  const variants = [normalized, normalizeTitle(transliterateCyrillic(normalized))];
+  variants.slice().forEach((item) => {
+    if (item) variants.push(item.replace(/yo/g, 'e'));
+  });
+  return [...new Set(variants.filter(Boolean))];
+}
+
+function cleanMetadataHintTitle(value) {
+  return safeString(value, 500)
+    .split('/')[0]
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\b(19|20)\d{2}\b/g, ' ')
+    .replace(/\b\d+\s*(сезон|сезона|сезонов|серия|серии|серий|из)\b/gi, ' ')
+    .replace(/\b(сезон|сезона|сезонов|серия|серии|серий|из|ру|rus|web|webdl|web-dl|webrip|dlrip|hdrip|bdrip)\b/gi, ' ')
+    .replace(/[._-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenDistance(a, b) {
+  if (a === b) return 0;
+  if (!a || !b) return Math.max(String(a || '').length, String(b || '').length);
+  const left = String(a);
+  const right = String(b);
+  const row = Array.from({ length: right.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= left.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= right.length; j++) {
+      const tmp = row[j];
+      row[j] = Math.min(
+        row[j] + 1,
+        row[j - 1] + 1,
+        prev + (left[i - 1] === right[j - 1] ? 0 : 1)
+      );
+      prev = tmp;
+    }
+  }
+  return row[right.length];
+}
+
+function fuzzyTokenIncluded(token, haystackTokens) {
+  if (!token || token.length < 3) return false;
+  return haystackTokens.some((candidate) => {
+    if (candidate === token || candidate.includes(token) || token.includes(candidate)) return true;
+    if (candidate[0] !== token[0]) return false;
+    return tokenDistance(candidate, token) <= Math.max(1, Math.floor(Math.min(candidate.length, token.length) / 3));
+  });
+}
+
+function genericMetadataTitle(metadata) {
+  const title = normalizeTitle(metadata && (metadata.title || metadata.name || metadata.original_title || metadata.original_name));
+  return /^(торренты|torrent|torrents)$/.test(title);
+}
+
 function metadataStoreTemplate() {
   return { version: 1, records: [] };
 }
@@ -170,6 +237,7 @@ function writeMetadataStore(store) {
 
 function sanitizeCardMetadata(metadata) {
   if (!metadata || typeof metadata !== 'object') return null;
+  if (genericMetadataTitle(metadata)) return null;
   const clean = {};
   [
     'id',
@@ -204,11 +272,19 @@ function metadataTitles(record) {
     card.name,
     card.original_title,
     card.original_name
-  ].map((item) => normalizeTitle(item)).filter(Boolean);
+  ].flatMap((item) => titleVariants(item)).filter(Boolean);
 }
 
 function saveMetadataRecord(payload) {
-  const metadata = sanitizeCardMetadata(payload.metadata);
+  let metadata = sanitizeCardMetadata(payload.metadata);
+  const titleHint = cleanMetadataHintTitle(payload.title) || safeString(payload.title, 500);
+  if (!metadata && titleHint) {
+    metadata = {
+      title: titleHint,
+      media_type: routedContentType(payload) || safeString(payload.contentType, 50),
+      source: 'torrent-title-hint'
+    };
+  }
   if (!metadata) return false;
 
   const store = readMetadataStore();
@@ -230,10 +306,22 @@ function saveMetadataRecord(payload) {
   return true;
 }
 
+function metadataFromRecord(record) {
+  const metadata = record && record.metadata ? { ...record.metadata } : {};
+  if (!genericMetadataTitle(metadata)) return metadata;
+  return {
+    title: cleanMetadataHintTitle(record && record.title) || safeString(record && record.title, 500),
+    media_type: safeString((record && record.contentType) || metadata.media_type, 50),
+    source: 'torrent-title-hint'
+  };
+}
+
 function metadataForDownloadItem(item) {
   const store = readMetadataStore();
   const haystack = normalizeTitle([item.folder, item.name].filter(Boolean).join(' '));
   if (!haystack) return null;
+  const haystackVariants = titleVariants(haystack);
+  const haystackTokens = haystackVariants.join(' ').split(/\s+/).filter(Boolean);
 
   let best = null;
   (store.records || []).forEach((record) => {
@@ -241,15 +329,15 @@ function metadataForDownloadItem(item) {
     let score = 0;
     metadataTitles(record).forEach((title) => {
       if (!title) return;
-      if (haystack === title) score = Math.max(score, 100);
-      else if (haystack.includes(title) || title.includes(haystack)) score = Math.max(score, 80);
+      if (haystackVariants.includes(title)) score = Math.max(score, 100);
+      else if (haystackVariants.some((item) => item.includes(title) || title.includes(item))) score = Math.max(score, 80);
       else {
         const parts = title.split(' ').filter((part) => part.length > 2);
-        const matched = parts.filter((part) => haystack.includes(part)).length;
+        const matched = parts.filter((part) => fuzzyTokenIncluded(part, haystackTokens)).length;
         if (parts.length && matched >= Math.min(parts.length, 3)) score = Math.max(score, 40 + matched);
       }
     });
-    if (score && (!best || score > best.score)) best = { score, metadata: record.metadata };
+    if (score && (!best || score > best.score)) best = { score, metadata: metadataFromRecord(record) };
   });
 
   return best ? best.metadata : null;

@@ -41,6 +41,57 @@
     return String(value || '').toLowerCase();
   }
 
+  function looksLikeTorrentScreen(card) {
+    var title = asLower(card && (card.title || card.name || card.Title || card.Name || ''));
+    return /^(торренты|torrents?)$/.test(title);
+  }
+
+  function looksLikeContentCard(card) {
+    if (!card || typeof card !== 'object' || looksLikeTorrentScreen(card)) return false;
+    if (torrentLink(card)) return false;
+    if (card.movie || card.card || card.object) return false;
+    return !!(
+      card.id ||
+      card.tmdb_id ||
+      card.movie_id ||
+      card.poster_path ||
+      card.backdrop_path ||
+      card.img ||
+      card.poster ||
+      card.release_date ||
+      card.first_air_date ||
+      card.original_title ||
+      card.original_name ||
+      card.number_of_seasons ||
+      card.number_of_episodes
+    ) && !!cardTitle(card);
+  }
+
+  function findContentCard(value, depth, seen) {
+    if (!value || typeof value !== 'object' || depth > 5) return null;
+    if (seen.indexOf(value) >= 0) return null;
+    seen.push(value);
+
+    if (looksLikeContentCard(value)) return value;
+
+    var priority = ['card', 'movie', 'object', 'card_data', 'data', 'cardData', 'source', 'activity', 'params'];
+    for (var i = 0; i < priority.length; i++) {
+      var found = findContentCard(value[priority[i]], depth + 1, seen);
+      if (found) return found;
+    }
+
+    for (var key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      if (/^(menu|items|results|element|torrent|torrents)$/i.test(key)) continue;
+      var nested = value[key];
+      if (!nested || typeof nested !== 'object') continue;
+      var result = findContentCard(nested, depth + 1, seen);
+      if (result) return result;
+    }
+
+    return null;
+  }
+
   function contentTypeFromObject(object) {
     if (!object || typeof object !== 'object') return '';
 
@@ -57,12 +108,8 @@
   function activeCard() {
     try {
       var active = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
-      var activity = active && (active.activity || active);
-      return (
-        (activity && (activity.card || activity.object || activity.movie)) ||
-        (active && (active.card || active.object || active.movie)) ||
-        null
-      );
+      var card = findContentCard(active, 0, []);
+      return card && !looksLikeTorrentScreen(card) ? card : null;
     } catch (error) {
       return null;
     }
@@ -86,7 +133,8 @@
   }
 
   function metadataFromCard(card, element, contentType) {
-    if (!card || typeof card !== 'object') return null;
+    card = findContentCard(card, 0, []) || card;
+    if (!card || typeof card !== 'object' || looksLikeTorrentScreen(card)) return null;
 
     var metadata = {
       id: card.id || card.tmdb_id || card.movie_id || '',
@@ -287,12 +335,13 @@
   function addMenuHook() {
     Lampa.Listener.follow('torrent', function (event) {
       if (event.type !== 'onlong' || !event.menu || !torrentLink(event.element)) return;
+      var sourceCard = findContentCard(event, 0, []) || activeCard();
       event.menu.unshift({
         title: Lampa.Lang.translate('qbit_download_menu_movie'),
         subtitle: event.element.Title || event.element.title || '',
         element: event.element,
         contentType: 'movie',
-        card: event.card || event.movie || activeCard(),
+        card: sourceCard,
         qbit_download: true,
         __lampa_qbit_download: true
       }, {
@@ -300,7 +349,7 @@
         subtitle: event.element.Title || event.element.title || '',
         element: event.element,
         contentType: 'tv',
-        card: event.card || event.movie || activeCard(),
+        card: sourceCard,
         qbit_download: true,
         __lampa_qbit_download: true
       });

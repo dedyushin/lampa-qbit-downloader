@@ -55,7 +55,7 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /MENU_ACTION = 'qbit_media_downloads'/);
   assert.match(source, /function loadMetadata/);
   assert.match(source, /savedMetadataFromFiles/);
-  assert.match(source, /group\.meta && group\.meta\.card\) return done\(group\)/);
+  assert.match(source, /group\.meta && group\.meta\.card && !group\.meta\.hint\) return done\(group\)/);
   assert.match(source, /function bestSearchCard/);
   assert.match(source, /function posterUrlsFromLibrary/);
   assert.match(source, /function categoryPosterHtml/);
@@ -70,7 +70,10 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /function watchKey/);
   assert.match(source, /function markWatched/);
   assert.match(source, /buildEpisodeList/);
-  assert.match(source, /qbit-media-episode-row/);
+  assert.match(source, /buildFileList/);
+  assert.match(source, /qbit-media-library--list/);
+  assert.match(source, /qbit-media-file-row/);
+  assert.match(source, /qbit-media-file-preview/);
   assert.match(source, /function \(direction, items, current\)/);
   assert.match(source, /sameVisualRow\(active, candidate\) && candidate\.centerX < active\.centerX - 5/);
   assert.match(source, /if \(!target\) return false;/);

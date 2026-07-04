@@ -243,6 +243,73 @@ test('bridge preserves Lampa card metadata and exposes it for downloaded files',
   }
 });
 
+test('bridge rejects generic torrent-screen metadata and can match Cyrillic title hints to transliterated folders', async () => {
+  const qbit = await startMockQbit();
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-cyrillic-metadata-'));
+  const tvDir = path.join(tempDir, 'TV SHOWS');
+  const metadataPath = path.join(tempDir, 'metadata.json');
+  fs.mkdirSync(path.join(tvDir, 'Chyornoe.solnce.S01.2023.WEB-DLip'), { recursive: true });
+  fs.writeFileSync(path.join(tvDir, 'Chyornoe.solnce.S01.2023.WEB-DLip', 'Chyornoe.solnce.S01.E01.2023.WEB-DLRip.avi'), 'episode');
+
+  const bridge = await startBridge({
+    QBIT_URL: `http://127.0.0.1:${qbit.port}`,
+    QBIT_USERNAME: 'admin',
+    QBIT_PASSWORD: 'secret',
+    QBIT_TV_PATH: tvDir,
+    LAMPA_METADATA_PATH: metadataPath,
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const bad = await fetch(`http://127.0.0.1:${bridge.port}/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({
+        link: 'magnet:?xt=urn:btih:badmeta',
+        title: 'Черное солнце (1 сезон: 1-12 серии из 12) / 2023 / РУ / WEB-DLRip',
+        contentType: 'tv',
+        metadata: { title: 'Торренты', media_type: 'tv' }
+      })
+    });
+    assert.equal(bad.status, 200);
+    const hintStore = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    assert.equal(hintStore.records.length, 1);
+    assert.equal(hintStore.records[0].metadata.source, 'torrent-title-hint');
+
+    const good = await fetch(`http://127.0.0.1:${bridge.port}/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({
+        link: 'magnet:?xt=urn:btih:goodmeta',
+        title: 'Черное солнце (1 сезон: 1-12 серии из 12) / 2023 / РУ / WEB-DLRip',
+        contentType: 'tv',
+        metadata: {
+          name: 'Черное солнце',
+          original_name: 'Chyornoe solnce',
+          first_air_date: '2023-01-01',
+          poster_path: '/black-sun.jpg',
+          media_type: 'tv'
+        }
+      })
+    });
+    assert.equal(good.status, 200);
+
+    const listed = await fetch(`http://127.0.0.1:${bridge.port}/downloads`, {
+      headers: { 'X-Bridge-Token': 'test-token' }
+    });
+    assert.equal(listed.status, 200);
+    const json = await listed.json();
+    const item = json.items.find((entry) => entry.name === 'Chyornoe.solnce.S01.E01.2023.WEB-DLRip.avi');
+    assert.ok(item);
+    assert.equal(item.metadata.name, 'Черное солнце');
+    assert.equal(item.metadata.poster_path, '/black-sun.jpg');
+  } finally {
+    await bridge.stop();
+    await close(qbit.server);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('bridge routes movie and tv content to Plex library folders in qBittorrent CLI mode', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-qbit-cli-'));
   const argsFile = path.join(tempDir, 'args.jsonl');
