@@ -240,7 +240,7 @@
     var found = null;
     (files || []).some(function (item) {
       if (item.metadata && typeof item.metadata === 'object') {
-        var usable = usableMetaCard(item.metadata);
+        var usable = usableMetaCard(item.metadata, libraryType);
         found = {
           card: item.metadata,
           type: item.metadata.media_type || libraryType || (item.metadata.name ? 'tv' : 'movie'),
@@ -276,7 +276,7 @@
       }, 0);
       var savedMeta = savedMetadataFromFiles(files, libraryType);
       var info = libraryType === 'movie' && files.length === 1 ? mediaNameInfo(files[0].name) : guessInfoFromGroup(folder, files);
-      if (savedMeta && savedMeta.card) {
+      if (savedMeta && savedMeta.card && !savedMeta.hint) {
         info.title = savedMeta.card.title || savedMeta.card.name || savedMeta.card.original_title || savedMeta.card.original_name || info.title;
         info.year = String(savedMeta.card.release_date || savedMeta.card.first_air_date || savedMeta.card.year || info.year || '').slice(0, 4);
       }
@@ -312,30 +312,82 @@
     return /^(торренты|torrent|torrents|детектив|detective|боевик|action|комедия|comedy|драма|drama|мелодрама|триллер|thriller|ужасы|horror|фантастика|sci fi|фэнтези|fantasy|мультфильм|animation|документальный|documentary)$/.test(title);
   }
 
-  function usableMetaCard(card) {
+  function episodeOnlyMetaCard(card, libraryType) {
+    if (!card || libraryType !== 'tv') return false;
+    if (card.poster_path || card.profile_path || card.backdrop_path || card.original_name || card.first_air_date || card.number_of_seasons || card.number_of_episodes) return false;
+    if (card.season_number || card.episode_number || card.still_path) return true;
+
+    var title = String(card.title || card.name || '').trim();
+    return /^(эпизод|episode)\s*\d+$/i.test(title);
+  }
+
+  function usableMetaCard(card, libraryType) {
     if (!card || typeof card !== 'object' || genericCardTitle(card)) return false;
+    if (episodeOnlyMetaCard(card, libraryType)) return false;
     return !!(card.poster_path || card.profile_path || card.backdrop_path || card.original_title || card.original_name || card.release_date || card.first_air_date || card.overview || card.name || card.title);
+  }
+
+  function cardSearchTitleVariants(card) {
+    return matchVariants([card.title, card.name, card.original_title, card.original_name].filter(Boolean).join(' '));
+  }
+
+  function normalizeSearchGroups(results, fallbackType) {
+    var groups = [];
+
+    function pushGroup(type, items) {
+      var list = (items || []).filter(Boolean);
+      if (list.length) groups.push({ type: type || fallbackType || '', results: list });
+    }
+
+    if (!results) return groups;
+
+    if (Array.isArray(results)) {
+      results.forEach(function (entry) {
+        if (!entry) return;
+        if (entry.results) pushGroup(entry.type || entry.media_type || fallbackType, entry.results);
+        else if (entry.movie || entry.tv) {
+          if (entry.movie) pushGroup('movie', entry.movie.results || entry.movie);
+          if (entry.tv) pushGroup('tv', entry.tv.results || entry.tv);
+        } else {
+          pushGroup(entry.media_type || (entry.name ? 'tv' : entry.title ? 'movie' : fallbackType), [entry]);
+        }
+      });
+    } else if (results.movie || results.tv) {
+      if (results.movie) pushGroup('movie', results.movie.results || results.movie);
+      if (results.tv) pushGroup('tv', results.tv.results || results.tv);
+    } else if (results.results) {
+      pushGroup(results.type || results.media_type || fallbackType, results.results);
+    }
+
+    return groups;
   }
 
   function bestSearchCard(groups, group) {
     var best = null;
     var query = group.title;
-    var queryLower = String(query || '').toLowerCase();
+    var queryVariants = matchVariants(query);
     var wantedYear = String(group.year || '');
 
-    (groups || []).forEach(function (resultGroup) {
+    normalizeSearchGroups(groups, group.libraryType).forEach(function (resultGroup) {
       (resultGroup.results || []).forEach(function (card) {
         if (genericCardTitle(card)) return;
-        var title = String(card.title || card.name || card.original_title || card.original_name || '').toLowerCase();
+        var type = resultGroup.type || card.media_type || (card.name ? 'tv' : 'movie');
+        if (group.libraryType && type && type !== group.libraryType) return;
+
+        var titleVariants = cardSearchTitleVariants(card);
         var year = cardYear(card);
         var score = 0;
-        if (title === queryLower) score += 100;
-        if (title.indexOf(queryLower) >= 0 || queryLower.indexOf(title) >= 0) score += 50;
+        queryVariants.forEach(function (queryTitle) {
+          titleVariants.forEach(function (resultTitle) {
+            if (resultTitle === queryTitle) score += 100;
+            else if (resultTitle.indexOf(queryTitle) >= 0 || queryTitle.indexOf(resultTitle) >= 0) score += 50;
+          });
+        });
         if (wantedYear && year === wantedYear) score += 80;
         else if (wantedYear && year && year !== wantedYear) score -= 70;
         if (card.poster_path) score += 10;
         if (card.vote_average) score += Number(card.vote_average);
-        if (score > 0 && (!best || score > best.score)) best = { score: score, card: card, type: resultGroup.type || card.media_type || (card.name ? 'tv' : 'movie') };
+        if (score > 0 && (!best || score > best.score)) best = { score: score, card: card, type: type };
       });
     });
 
@@ -380,7 +432,8 @@
 
     var key = cacheKey(group);
     var cached = Lampa.Storage.get(key, '{}');
-    if (cached && cached.card && usableMetaCard(cached.card)) {
+    var cachedIsTmdb = cached && cached.provider === 'tmdb' && cached.card && usableMetaCard(cached.card, group.libraryType);
+    if (cachedIsTmdb) {
       group.meta = cached;
       return done(group);
     }
@@ -388,6 +441,7 @@
     searchTmdb(query, function (tmdbResults) {
       var match = bestSearchCard(tmdbResults, group);
       if (match) {
+        match.provider = 'tmdb';
         group.meta = match;
         Lampa.Storage.set(key, match);
         return done(group);
@@ -396,6 +450,7 @@
       searchCub(query, function (cubResults) {
         match = bestSearchCard(cubResults, group);
         if (match) {
+          match.provider = 'cub';
           group.meta = match;
           Lampa.Storage.set(key, match);
         }
