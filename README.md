@@ -2,6 +2,33 @@
 
 Плагин добавляет пункт `Скачать в qBittorrent` в длинное меню торрента в Lampa. Просмотр через TorrServer MatriX не меняется: обычное нажатие по торренту по-прежнему открывает поток, а долгое нажатие даёт дополнительное действие для скачивания на сервер.
 
+## Текущая стабильная версия
+
+Текущий протестированный на телевизоре релиз: `v0.2.0`, дата фиксации `2026-07-05`.
+
+Обычные рабочие URL в Lampa остаются прежними:
+
+```text
+GETS TV online:
+https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@4288ffd70d85b124ad832b374f32dc27140202bb/lampa-getstv-online.js
+
+Скачанное:
+https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@main/lampa-qbit-media.js
+
+Отправка торрента:
+https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@main/lampa-qbit-download.js
+```
+
+Пинованные версии для отката и проверки через jsDelivr:
+
+| Компонент | Стабильная версия | jsDelivr URL |
+| --- | --- | --- |
+| GETS TV online | `0.1.0`, коммит `4288ffd`, дата `2026-06-10` | `https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@lampa-getstv-online-v0.1.0/lampa-getstv-online.js` |
+| Отправка торрента | `0.2.0`, дата `2026-07-05` | `https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@lampa-qbit-download-v0.2.0/lampa-qbit-download.js` |
+| Скачанное | `0.2.0`, дата `2026-07-05` | `https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@lampa-qbit-media-v0.2.0/lampa-qbit-media.js` |
+
+Последняя стабильная точка отката до этих доработок: `v0.1.0` / коммит `0a44bb3`.
+
 ## Файлы
 
 - `lampa-qbit-download.js` — основной плагин для Lampa: только отправка торрентов в qBittorrent с выбором `Скачать как фильм` / `Скачать как сериал`.
