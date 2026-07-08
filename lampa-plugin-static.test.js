@@ -17,6 +17,8 @@ test('main Lampa downloader plugin exposes only explicit movie and TV download m
   assert.match(source, /contentType:\s*'tv'/);
   assert.match(source, /metadataFromCard/);
   assert.match(source, /metadata:\s*metadataFromCard/);
+  assert.match(source, /function looksLikePersonCard/);
+  assert.match(source, /looksLikeTorrentScreen\(card\) \|\| looksLikePersonCard\(card\)/);
   assert.match(source, /download\(item\.element, item\.contentType \|\| '', item\.card \|\| null\)/);
   assert.doesNotMatch(source, /qbit_download_open_downloads/);
   assert.doesNotMatch(source, /AndroidJS\.openPlayer/);

@@ -205,7 +205,9 @@ function tokenDistance(a, b) {
 function fuzzyTokenIncluded(token, haystackTokens) {
   if (!token || token.length < 3) return false;
   return haystackTokens.some((candidate) => {
-    if (candidate === token || candidate.includes(token) || token.includes(candidate)) return true;
+    if (!candidate || candidate.length < 3) return false;
+    if (candidate === token || candidate.includes(token)) return true;
+    if (candidate.length >= 4 && token.includes(candidate)) return true;
     if (candidate[0] !== token[0]) return false;
     return tokenDistance(candidate, token) <= Math.max(1, Math.floor(Math.min(candidate.length, token.length) / 3));
   });
@@ -214,6 +216,37 @@ function fuzzyTokenIncluded(token, haystackTokens) {
 function genericMetadataTitle(metadata) {
   const title = normalizeTitle(metadata && (metadata.title || metadata.name || metadata.original_title || metadata.original_name));
   return /^(торренты|torrent|torrents|детектив|detective|боевик|action|комедия|comedy|драма|drama|мелодрама|триллер|thriller|ужасы|horror|фантастика|sci fi|фэнтези|fantasy|мультфильм|animation|документальный|documentary)$/.test(title);
+}
+
+function metadataHasMediaSignal(metadata) {
+  if (!metadata || typeof metadata !== 'object') return false;
+  return !!(
+    metadata.poster_path ||
+    metadata.backdrop_path ||
+    metadata.release_date ||
+    metadata.first_air_date ||
+    metadata.year ||
+    metadata.overview
+  );
+}
+
+function metadataTitleMatchesHint(metadata, hint) {
+  const hintVariants = titleVariants(hint);
+  if (!hintVariants.length) return false;
+  const titleItems = [metadata && metadata.title, metadata && metadata.name, metadata && metadata.original_title, metadata && metadata.original_name]
+    .flatMap((item) => titleVariants(item));
+
+  return titleItems.some((title) => hintVariants.some((hintTitle) => (
+    title === hintTitle ||
+    (title.length >= 4 && hintTitle.includes(title)) ||
+    (hintTitle.length >= 4 && title.includes(hintTitle))
+  )));
+}
+
+function weakLampaCardMetadata(metadata, hint) {
+  if (!metadata || metadata.source !== 'lampa-card') return false;
+  if (metadataHasMediaSignal(metadata)) return false;
+  return !metadataTitleMatchesHint(metadata, hint);
 }
 
 function metadataStoreTemplate() {
@@ -235,7 +268,7 @@ function writeMetadataStore(store) {
   fs.writeFileSync(config.metadataPath, JSON.stringify(store, null, 2));
 }
 
-function sanitizeCardMetadata(metadata) {
+function sanitizeCardMetadata(metadata, titleHint) {
   if (!metadata || typeof metadata !== 'object') return null;
   if (genericMetadataTitle(metadata)) return null;
   const clean = {};
@@ -261,19 +294,22 @@ function sanitizeCardMetadata(metadata) {
     }
   });
 
+  if (weakLampaCardMetadata(clean, titleHint)) return null;
   return Object.keys(clean).length ? clean : null;
 }
 
 function metadataTitles(record) {
   const card = record && record.metadata ? record.metadata : {};
   const titles = [record && record.title];
-  if (!genericMetadataTitle(card)) titles.push(card.title, card.name, card.original_title, card.original_name);
+  if (!genericMetadataTitle(card) && !weakLampaCardMetadata(card, record && record.title)) {
+    titles.push(card.title, card.name, card.original_title, card.original_name);
+  }
   return titles.flatMap((item) => titleVariants(item)).filter(Boolean);
 }
 
 function saveMetadataRecord(payload) {
-  let metadata = sanitizeCardMetadata(payload.metadata);
   const titleHint = cleanMetadataHintTitle(payload.title) || safeString(payload.title, 500);
+  let metadata = sanitizeCardMetadata(payload.metadata, titleHint || payload.title);
   if (!metadata && titleHint) {
     metadata = {
       title: titleHint,
@@ -304,7 +340,7 @@ function saveMetadataRecord(payload) {
 
 function metadataFromRecord(record) {
   const metadata = record && record.metadata ? { ...record.metadata } : {};
-  if (!genericMetadataTitle(metadata)) return metadata;
+  if (!genericMetadataTitle(metadata) && !weakLampaCardMetadata(metadata, record && record.title)) return metadata;
   return {
     title: cleanMetadataHintTitle(record && record.title) || safeString(record && record.title, 500),
     media_type: safeString((record && record.contentType) || metadata.media_type, 50),

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.1 - 2026-07-08
+
+Hotfix for downloaded-series metadata leakage.
+
+- Rejected weak Lampa person-card metadata when it does not match the torrent title and has no movie/TV media signals.
+- Converted such bad records to a safe torrent-title hint instead of exposing the person title in `/downloads`.
+- Tightened fuzzy metadata matching so one-letter release tokens such as `H` cannot make unrelated series match the wrong saved card.
+- Prevented the downloader plugin from selecting obvious person cards as the active source card.
+- Scoped `npm test` to the real root test files so ignored backup copies are not executed.
+
 ## v0.2.0 - 2026-07-05
 
 TV-tested stable release for the current Lampa/qBittorrent workflow.

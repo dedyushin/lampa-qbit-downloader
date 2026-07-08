@@ -46,8 +46,21 @@
     return /^(торренты|torrents?|детектив|detective|боевик|action|комедия|comedy|драма|drama|мелодрама|триллер|thriller|ужасы|horror|фантастика|sci fi|фэнтези|fantasy|мультфильм|animation|документальный|documentary)$/.test(title);
   }
 
+  function looksLikePersonCard(card) {
+    if (!card || typeof card !== 'object') return false;
+    if (!(card.profile_path || card.known_for_department || card.known_for)) return false;
+    return !(
+      card.poster_path ||
+      card.backdrop_path ||
+      card.release_date ||
+      card.first_air_date ||
+      card.number_of_seasons ||
+      card.number_of_episodes
+    );
+  }
+
   function looksLikeContentCard(card) {
-    if (!card || typeof card !== 'object' || looksLikeTorrentScreen(card)) return false;
+    if (!card || typeof card !== 'object' || looksLikeTorrentScreen(card) || looksLikePersonCard(card)) return false;
     if (torrentLink(card)) return false;
     if (card.movie || card.card || card.object) return false;
     return !!(

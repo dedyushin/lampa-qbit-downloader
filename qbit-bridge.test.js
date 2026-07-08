@@ -356,6 +356,67 @@ test('bridge does not leak generic genre metadata to unrelated downloaded series
   }
 });
 
+test('bridge falls back from weak person metadata and does not leak it to unrelated series', async () => {
+  const qbit = await startMockQbit();
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-person-metadata-'));
+  const tvDir = path.join(tempDir, 'TV SHOWS');
+  const metadataPath = path.join(tempDir, 'metadata.json');
+  fs.mkdirSync(path.join(tvDir, 'Sugar.2024.S01.2160p.WEB-DL.HDR.DV.H.265-RGzsRutracker'), { recursive: true });
+  fs.mkdirSync(path.join(tvDir, 'Beef 2023'), { recursive: true });
+  fs.writeFileSync(path.join(tvDir, 'Sugar.2024.S01.2160p.WEB-DL.HDR.DV.H.265-RGzsRutracker', 'Sugar.2024.S01E01.Olivia.2160p.WEB-DL.HDR.DV.H.265-RGzsRutracker.mkv'), 'episode');
+  fs.writeFileSync(path.join(tvDir, 'Beef 2023', 'Beef.S02E01.2160p.NF.WEB-DL.H.265.RGzsRutracker.mkv'), 'episode');
+
+  const bridge = await startBridge({
+    QBIT_URL: `http://127.0.0.1:${qbit.port}`,
+    QBIT_USERNAME: 'admin',
+    QBIT_PASSWORD: 'secret',
+    QBIT_TV_PATH: tvDir,
+    LAMPA_METADATA_PATH: metadataPath,
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const added = await fetch(`http://127.0.0.1:${bridge.port}/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({
+        link: 'magnet:?xt=urn:btih:weakpersonmeta',
+        title: 'Шугар (1 сезон: 1-8 серии из 8) / Sugar / 2024 / 4K, HEVC, HDR10+',
+        contentType: 'tv',
+        metadata: {
+          id: 6854,
+          title: 'Марк Протосевич',
+          original_title: 'Mark Protosevich',
+          media_type: 'tv',
+          source: 'lampa-card'
+        }
+      })
+    });
+    assert.equal(added.status, 200);
+
+    const stored = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    assert.equal(stored.records[0].metadata.source, 'torrent-title-hint');
+    assert.equal(stored.records[0].metadata.title, 'Шугар');
+
+    const listed = await fetch(`http://127.0.0.1:${bridge.port}/downloads`, {
+      headers: { 'X-Bridge-Token': 'test-token' }
+    });
+    assert.equal(listed.status, 200);
+    const json = await listed.json();
+    const sugar = json.items.find((entry) => entry.name === 'Sugar.2024.S01E01.Olivia.2160p.WEB-DL.HDR.DV.H.265-RGzsRutracker.mkv');
+    const beef = json.items.find((entry) => entry.name === 'Beef.S02E01.2160p.NF.WEB-DL.H.265.RGzsRutracker.mkv');
+    assert.ok(sugar);
+    assert.ok(beef);
+    assert.equal(sugar.metadata.title, 'Шугар');
+    assert.equal(sugar.metadata.source, 'torrent-title-hint');
+    assert.equal(beef.metadata, undefined);
+  } finally {
+    await bridge.stop();
+    await close(qbit.server);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('bridge routes movie and tv content to Plex library folders in qBittorrent CLI mode', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-qbit-cli-'));
   const argsFile = path.join(tempDir, 'args.jsonl');

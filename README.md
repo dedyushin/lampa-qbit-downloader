@@ -4,7 +4,9 @@
 
 ## Текущая стабильная версия
 
-Текущий протестированный на телевизоре релиз: `v0.2.0`, дата фиксации `2026-07-05`.
+Текущий стабильный релиз: `v0.2.1`, дата фиксации `2026-07-08`.
+
+Базовая TV-tested версия: `v0.2.0`, дата фиксации `2026-07-05`.
 
 Обычные рабочие URL в Lampa остаются прежними:
 
@@ -24,8 +26,8 @@ https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@main/lampa-qbit-down
 | Компонент | Стабильная версия | jsDelivr URL |
 | --- | --- | --- |
 | GETS TV online | `0.1.0`, коммит `4288ffd`, дата `2026-06-10` | `https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@lampa-getstv-online-v0.1.0/lampa-getstv-online.js` |
-| Отправка торрента | `0.2.0`, дата `2026-07-05` | `https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@lampa-qbit-download-v0.2.0/lampa-qbit-download.js` |
-| Скачанное | `0.2.0`, дата `2026-07-05` | `https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@lampa-qbit-media-v0.2.0/lampa-qbit-media.js` |
+| Отправка торрента | `0.2.1`, дата `2026-07-08` | `https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@lampa-qbit-download-v0.2.1/lampa-qbit-download.js` |
+| Скачанное | `0.2.1`, дата `2026-07-08` | `https://cdn.jsdelivr.net/gh/dedyushin/lampa-qbit-downloader@lampa-qbit-media-v0.2.1/lampa-qbit-media.js` |
 
 Последняя стабильная точка отката до этих доработок: `v0.1.0` / коммит `0a44bb3`.
 
