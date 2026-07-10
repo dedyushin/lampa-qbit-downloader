@@ -61,6 +61,11 @@ QBIT_MOVIES_PATH=/Volumes/Media/FILMS
 QBIT_TV_PATH="/Volumes/Media/TV SHOWS"
 QBIT_MOVIES_CATEGORY=films
 QBIT_TV_CATEGORY=tv-shows
+QBIT_ADD_MODE=webui
+LAMPA_AUTO_REMOVE_COMPLETED=true
+LAMPA_AUTO_REMOVE_INTERVAL_MS=15000
+LAMPA_AUTO_REMOVE_GRACE_SECONDS=30
+LAMPA_METADATA_SYNC_INTERVAL_MS=5000
 ```
 
 Если Lampa передаёт тип карточки, bridge переопределяет общий `QBIT_SAVE_PATH`:
@@ -69,6 +74,34 @@ QBIT_TV_CATEGORY=tv-shows
 - сериал → `/Volumes/Media/TV SHOWS`, категория `tv-shows`.
 
 Если тип не удалось определить, bridge использует общий `QBIT_SAVE_PATH`.
+
+## Точная привязка карточки Lampa
+
+Downloader сохраняет составной ключ исходной карточки `source:media:id`, например `cub:movie:1020047`. Bridge добавляет к задаче уникальный тег `lampa-meta-*`, находит её через локальный qBittorrent Web API и фиксирует точные `hash`, `content_path` и список файлов в `.lampa-metadata.json`.
+
+`lampa-qbit-media.js` сначала загружает карточку напрямую через `Lampa.Api.full` по сохранённому ключу. Поиск по названию остаётся только запасным вариантом для старых записей без identity. Для этого режима нужен `QBIT_ADD_MODE=webui`; CLI-режим qBittorrent не сохраняет уникальные metadata-теги.
+
+## Автоудаление завершённых торрент-задач
+
+Bridge может автоматически убирать завершённые Lampa-задачи из qBittorrent, не удаляя скачанные фильмы и серии:
+
+```bash
+LAMPA_AUTO_REMOVE_COMPLETED=true
+LAMPA_AUTO_REMOVE_INTERVAL_MS=15000
+LAMPA_AUTO_REMOVE_GRACE_SECONDS=30
+```
+
+Автоудаление намеренно ограничено:
+
+- только категориями `QBIT_MOVIES_CATEGORY` и `QBIT_TV_CATEGORY`;
+- только задачами со скачиванием `100%` и нулевым остатком;
+- только существующими файлами/папками внутри `QBIT_MOVIES_PATH` или `QBIT_TV_PATH`;
+- только задачами, metadata которых уже привязаны к точному `content_path`;
+- вызовом qBittorrent API с `deleteFiles=false`, поэтому медиаданные остаются на диске и продолжают отображаться в Lampa.
+
+`LAMPA_AUTO_REMOVE_GRACE_SECONDS` задаёт страховочную паузу после завершения. Во время самого скачивания BitTorrent всё ещё может отдавать данные, но постоянное сидирование после завершения прекращается.
+
+Для этой функции локальный Web API qBittorrent должен быть доступен на `QBIT_URL`. На Anton Mac mini Web API привязан только к `127.0.0.1:8080`; входящий BitTorrent-порт для пиров остаётся отдельным портом и не является Web API.
 
 Для защиты Plex от недокачанных файлов на Anton Mac mini включён временный каталог qBittorrent:
 

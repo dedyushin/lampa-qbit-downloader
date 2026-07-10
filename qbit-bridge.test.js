@@ -35,7 +35,7 @@ function readBody(req) {
   });
 }
 
-async function startMockQbit() {
+async function startMockQbit(options = {}) {
   const calls = [];
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -52,7 +52,36 @@ async function startMockQbit() {
       return res.end('v5.0.0');
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/v2/torrents/info') {
+      if (!String(req.headers.cookie || '').includes('SID=test-session')) {
+        res.writeHead(403);
+        return res.end('Forbidden');
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      const torrents = typeof options.torrents === 'function' ? options.torrents(calls) : (options.torrents || []);
+      return res.end(JSON.stringify(torrents));
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/v2/torrents/files') {
+      if (!String(req.headers.cookie || '').includes('SID=test-session')) {
+        res.writeHead(403);
+        return res.end('Forbidden');
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      const files = typeof options.files === 'function' ? options.files(calls) : (options.files || []);
+      return res.end(JSON.stringify(files));
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/v2/torrents/add') {
+      if (!String(req.headers.cookie || '').includes('SID=test-session')) {
+        res.writeHead(403);
+        return res.end('Forbidden');
+      }
+      res.writeHead(200);
+      return res.end('Ok.');
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/v2/torrents/delete') {
       if (!String(req.headers.cookie || '').includes('SID=test-session')) {
         res.writeHead(403);
         return res.end('Forbidden');
@@ -67,6 +96,15 @@ async function startMockQbit() {
 
   const port = await listen(server);
   return { server, port, calls };
+}
+
+async function waitFor(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('Timed out waiting for condition');
 }
 
 async function startBridge(env) {
@@ -236,6 +274,89 @@ test('bridge preserves Lampa card metadata and exposes it for downloaded files',
     assert.ok(item);
     assert.equal(item.metadata.title, 'Я тебя отыщу');
     assert.equal(item.metadata.poster_path, '/poster.jpg');
+  } finally {
+    await bridge.stop();
+    await close(qbit.server);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('bridge binds composite Lampa identity to the exact qBittorrent content path', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-exact-binding-'));
+  const moviesDir = path.join(tempDir, 'FILMS');
+  const metadataPath = path.join(tempDir, 'metadata.json');
+  const movieFile = path.join(moviesDir, 'asset-001.mkv');
+  const unrelatedFile = path.join(moviesDir, 'asset-002.mkv');
+  fs.mkdirSync(moviesDir, { recursive: true });
+  fs.writeFileSync(movieFile, 'movie');
+  fs.writeFileSync(unrelatedFile, 'other');
+
+  const torrentHash = 'd'.repeat(40);
+  const qbit = await startMockQbit({
+    torrents: (calls) => {
+      const addCall = calls.find((call) => call.path === '/api/v2/torrents/add');
+      if (!addCall) return [];
+      const tags = new URLSearchParams(addCall.body).get('tags') || '';
+      return [{
+        hash: torrentHash,
+        name: 'asset-001.mkv',
+        category: 'films',
+        tags,
+        state: 'downloading',
+        progress: 0.5,
+        content_path: movieFile,
+        save_path: moviesDir
+      }];
+    },
+    files: [{ name: 'asset-001.mkv' }]
+  });
+  const bridge = await startBridge({
+    QBIT_URL: `http://127.0.0.1:${qbit.port}`,
+    QBIT_USERNAME: 'admin',
+    QBIT_PASSWORD: 'secret',
+    QBIT_ADD_MODE: 'webui',
+    QBIT_MOVIES_PATH: moviesDir,
+    LAMPA_METADATA_PATH: metadataPath,
+    LAMPA_METADATA_SYNC_INTERVAL_MS: '25',
+    BRIDGE_TOKEN: 'test-token'
+  });
+
+  try {
+    const added = await fetch(`http://127.0.0.1:${bridge.port}/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': 'test-token' },
+      body: JSON.stringify({
+        link: 'magnet:?xt=urn:btih:exactbinding',
+        title: 'Кодекс Данте / In the Hand of Dante / 2025',
+        contentType: 'movie',
+        identity: { id: 1020047, media_type: 'movie', source: 'cub' },
+        metadata: {
+          id: 1020047,
+          title: 'Кодекс Данте',
+          original_title: 'In the Hand of Dante',
+          media_type: 'movie',
+          provider: 'cub',
+          origin: 'lampa-card'
+        }
+      })
+    });
+    assert.equal(added.status, 200);
+
+    const addCall = qbit.calls.find((call) => call.path === '/api/v2/torrents/add');
+    assert.match(new URLSearchParams(addCall.body).get('tags') || '', /lampa-meta-[a-f0-9]{16}/);
+    await waitFor(() => {
+      const store = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+      return store.records[0].binding && store.records[0].binding.hash === torrentHash;
+    });
+
+    const listed = await fetch(`http://127.0.0.1:${bridge.port}/downloads`, {
+      headers: { 'X-Bridge-Token': 'test-token' }
+    }).then((response) => response.json());
+    const exact = listed.items.find((item) => item.name === 'asset-001.mkv');
+    const unrelated = listed.items.find((item) => item.name === 'asset-002.mkv');
+    assert.equal(exact.metadata.card_identity.key, 'cub:movie:1020047');
+    assert.equal(exact.metadata.title, 'Кодекс Данте');
+    assert.equal(unrelated.metadata, undefined);
   } finally {
     await bridge.stop();
     await close(qbit.server);
@@ -689,6 +810,92 @@ test('bridge keeps non-empty release folders after deleting one video file', asy
     assert.equal(fs.existsSync(tvDir), true);
   } finally {
     await bridge.stop();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('bridge removes only completed Lampa torrent tasks and keeps downloaded media', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-auto-remove-'));
+  const moviesDir = path.join(tempDir, 'FILMS');
+  const movieDir = path.join(moviesDir, 'Completed Movie');
+  const movieFile = path.join(movieDir, 'Completed.Movie.mkv');
+  const metadataPath = path.join(tempDir, 'metadata.json');
+  fs.mkdirSync(movieDir, { recursive: true });
+  fs.writeFileSync(movieFile, 'movie');
+
+  const completedHash = 'a'.repeat(40);
+  const unrelatedHash = 'b'.repeat(40);
+  const outsideRootHash = 'c'.repeat(40);
+  const completedAt = Math.floor(Date.now() / 1000) - 60;
+  fs.writeFileSync(metadataPath, JSON.stringify({
+    version: 2,
+    records: [{
+      id: 'completed-record',
+      contentType: 'movie',
+      metadata: { title: 'Completed Movie', media_type: 'movie', origin: 'torrent-title-hint' },
+      binding: {
+        tag: '',
+        hash: completedHash,
+        contentPath: movieDir,
+        files: [movieFile],
+        boundAt: new Date().toISOString()
+      }
+    }]
+  }, null, 2));
+  const qbit = await startMockQbit({
+    torrents: [
+      {
+        hash: completedHash,
+        category: 'films',
+        state: 'stalledUP',
+        progress: 1,
+        amount_left: 0,
+        completion_on: completedAt,
+        content_path: movieDir
+      },
+      {
+        hash: unrelatedHash,
+        category: 'other',
+        state: 'stalledUP',
+        progress: 1,
+        amount_left: 0,
+        completion_on: completedAt,
+        content_path: movieDir
+      },
+      {
+        hash: outsideRootHash,
+        category: 'films',
+        state: 'stalledUP',
+        progress: 1,
+        amount_left: 0,
+        completion_on: completedAt,
+        content_path: tempDir
+      }
+    ]
+  });
+  const bridge = await startBridge({
+    QBIT_URL: `http://127.0.0.1:${qbit.port}`,
+    QBIT_USERNAME: 'admin',
+    QBIT_PASSWORD: 'secret',
+    QBIT_MOVIES_PATH: moviesDir,
+    QBIT_MOVIES_CATEGORY: 'films',
+    LAMPA_METADATA_PATH: metadataPath,
+    LAMPA_AUTO_REMOVE_COMPLETED: 'true',
+    LAMPA_AUTO_REMOVE_INTERVAL_MS: '25',
+    LAMPA_AUTO_REMOVE_GRACE_SECONDS: '0'
+  });
+
+  try {
+    await waitFor(() => qbit.calls.some((call) => call.path === '/api/v2/torrents/delete'));
+    const deleted = qbit.calls.find((call) => call.path === '/api/v2/torrents/delete');
+    assert.match(deleted.body, new RegExp(`hashes=${completedHash}`));
+    assert.doesNotMatch(deleted.body, new RegExp(unrelatedHash));
+    assert.doesNotMatch(deleted.body, new RegExp(outsideRootHash));
+    assert.match(deleted.body, /deleteFiles=false/);
+    assert.equal(fs.existsSync(movieFile), true, 'downloaded media must be preserved');
+  } finally {
+    await bridge.stop();
+    await close(qbit.server);
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

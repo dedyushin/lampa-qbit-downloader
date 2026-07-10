@@ -243,6 +243,7 @@
         var usable = usableMetaCard(item.metadata, libraryType);
         found = {
           card: item.metadata,
+          identity: cardIdentity(item.metadata, libraryType),
           type: item.metadata.media_type || libraryType || (item.metadata.name ? 'tv' : 'movie'),
           saved: true,
           hint: !usable
@@ -321,8 +322,30 @@
     return /^(эпизод|episode)\s*\d+$/i.test(title);
   }
 
+  function metadataOrigin(card) {
+    return asLower(card && (card.origin || card.metadata_origin || card.source || ''));
+  }
+
+  function cardIdentity(card, fallbackType) {
+    if (!card || typeof card !== 'object') return null;
+    var raw = card.card_identity || card.identity || {};
+    var id = raw.id || raw.tmdb_id || raw.movie_id || card.id || card.tmdb_id || card.movie_id || '';
+    var source = asLower(raw.source || raw.provider || card.provider || (/^(tmdb|cub)$/.test(asLower(card.source)) ? card.source : ''));
+    var mediaType = asLower(raw.media_type || raw.mediaType || raw.type || card.media_type || fallbackType || '');
+    if (/film|movie/.test(mediaType)) mediaType = 'movie';
+    else if (/tv|show|series|serial/.test(mediaType)) mediaType = 'tv';
+    if (!id || !source || !mediaType) return null;
+    return {
+      id: id,
+      source: source,
+      media_type: mediaType,
+      key: source + ':' + mediaType + ':' + id
+    };
+  }
+
   function usableMetaCard(card, libraryType) {
     if (!card || typeof card !== 'object' || genericCardTitle(card)) return false;
+    if (metadataOrigin(card) === 'torrent-title-hint') return false;
     if (episodeOnlyMetaCard(card, libraryType)) return false;
     return !!(card.poster_path || card.profile_path || card.backdrop_path || card.original_title || card.original_name || card.release_date || card.first_air_date || card.overview || card.name || card.title);
   }
@@ -424,37 +447,92 @@
     }
   }
 
-  function loadMetadata(group, done) {
-    if (group.meta && group.meta.card && !group.meta.hint) return done(group);
+  function exactMetadataCacheKey(identity) {
+    return 'qbit_media_card_' + String(identity && identity.key || '').replace(/[^a-z0-9:_-]+/ig, '_').slice(0, 120);
+  }
 
-    var query = group.title;
-    if (!query || !Lampa.Api) return done(group);
+  function loadExactMetadata(group, done) {
+    var identity = group.meta && (group.meta.identity || cardIdentity(group.meta.card, group.libraryType));
+    if (!identity || !Lampa.Api || !Lampa.Api.full) return done(false);
 
-    var key = cacheKey(group);
+    var key = exactMetadataCacheKey(identity);
     var cached = Lampa.Storage.get(key, '{}');
-    var cachedIsTmdb = cached && cached.provider === 'tmdb' && cached.card && usableMetaCard(cached.card, group.libraryType);
-    if (cachedIsTmdb) {
+    if (cached && cached.card && usableMetaCard(cached.card, identity.media_type)) {
       group.meta = cached;
-      return done(group);
+      return done(true);
     }
 
-    searchTmdb(query, function (tmdbResults) {
-      var match = bestSearchCard(tmdbResults, group);
-      if (match) {
-        match.provider = 'tmdb';
-        group.meta = match;
-        Lampa.Storage.set(key, match);
+    var hint = group.meta && group.meta.card || {};
+    var seed = {
+      id: identity.id,
+      source: identity.source,
+      media_type: identity.media_type,
+      title: hint.title || hint.name || '',
+      original_title: hint.original_title || hint.original_name || ''
+    };
+
+    try {
+      Lampa.Api.full({
+        id: identity.id,
+        source: identity.source,
+        method: identity.media_type,
+        card: seed
+      }, function (result) {
+        var card = result && (result.movie || result.card);
+        if (!usableMetaCard(card, identity.media_type)) return done(false);
+        if (!card.source) card.source = identity.source;
+        group.meta = {
+          card: card,
+          type: identity.media_type,
+          provider: identity.source,
+          identity: identity,
+          exact: true
+        };
+        Lampa.Storage.set(key, group.meta);
+        done(true);
+      }, function () {
+        done(false);
+      });
+    } catch (error) {
+      done(false);
+    }
+  }
+
+  function loadMetadata(group, done) {
+    if (group.meta && group.meta.card && !group.meta.hint && usableMetaCard(group.meta.card, group.libraryType)) return done(group);
+
+    loadExactMetadata(group, function (exactFound) {
+      if (exactFound) return done(group);
+
+      var query = group.title;
+      if (!query || !Lampa.Api) return done(group);
+
+      var key = cacheKey(group);
+      var cached = Lampa.Storage.get(key, '{}');
+      var cachedIsTmdb = cached && cached.provider === 'tmdb' && cached.card && usableMetaCard(cached.card, group.libraryType);
+      if (cachedIsTmdb) {
+        group.meta = cached;
         return done(group);
       }
 
-      searchCub(query, function (cubResults) {
-        match = bestSearchCard(cubResults, group);
+      searchTmdb(query, function (tmdbResults) {
+        var match = bestSearchCard(tmdbResults, group);
         if (match) {
-          match.provider = 'cub';
+          match.provider = 'tmdb';
           group.meta = match;
           Lampa.Storage.set(key, match);
+          return done(group);
         }
-        done(group);
+
+        searchCub(query, function (cubResults) {
+          match = bestSearchCard(cubResults, group);
+          if (match) {
+            match.provider = 'cub';
+            group.meta = match;
+            Lampa.Storage.set(key, match);
+          }
+          done(group);
+        });
       });
     });
   }
@@ -516,13 +594,15 @@
   function openLampaCard(group) {
     if (!group.meta || !group.meta.card) return notify('Карточка Lampa не найдена');
     var card = group.meta.card;
+    var identity = group.meta.identity || cardIdentity(card, group.libraryType);
+    var type = identity ? identity.media_type : (group.meta.type || (card.name ? 'tv' : 'movie'));
     Lampa.Activity.push({
       url: '',
       component: 'full',
-      id: card.id,
-      method: group.meta.type || (card.name ? 'tv' : 'movie'),
+      id: identity ? identity.id : card.id,
+      method: type,
       card: card,
-      source: 'cub'
+      source: identity ? identity.source : (card.source || group.meta.provider || 'tmdb')
     });
   }
 
@@ -645,8 +725,9 @@
     if (cardId) {
       var idMatched = (group.files || []).some(function (item) {
         var meta = item.metadata || {};
-        var metaId = String(meta.id || meta.tmdb_id || meta.movie_id || '');
-        var metaType = meta.media_type || meta.type || '';
+        var identity = cardIdentity(meta, group.libraryType);
+        var metaId = String(identity ? identity.id : (meta.id || meta.tmdb_id || meta.movie_id || ''));
+        var metaType = identity ? identity.media_type : (meta.media_type || meta.type || '');
         return metaId && metaId === cardId && (!wantedType || !metaType || metaType === wantedType);
       });
       if (idMatched) return true;
@@ -1265,6 +1346,14 @@
       '.qbit-media-episode-ext{font-size:1.08em;font-weight:700;color:rgba(255,255,255,.82);}'
     ].join('\n');
     document.head.appendChild(style);
+  }
+
+  if (window.__LAMPA_QBIT_TEST__) {
+    window.__lampaQbitMediaTest = {
+      cardIdentity: cardIdentity,
+      usableMetaCard: usableMetaCard,
+      loadMetadata: loadMetadata
+    };
   }
 
   ready(function () {

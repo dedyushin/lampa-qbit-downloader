@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { test } = require('node:test');
 
 function pluginSource(file = 'lampa-qbit-download.js') {
@@ -17,6 +18,10 @@ test('main Lampa downloader plugin exposes only explicit movie and TV download m
   assert.match(source, /contentType:\s*'tv'/);
   assert.match(source, /metadataFromCard/);
   assert.match(source, /metadata:\s*metadataFromCard/);
+  assert.match(source, /identity:\s*identityFromCard/);
+  assert.match(source, /provider:\s*provider/);
+  assert.match(source, /origin:\s*'lampa-card'/);
+  assert.match(source, /Lampa\.Listener\.follow\('full', rememberFullCard\)/);
   assert.match(source, /function looksLikePersonCard/);
   assert.match(source, /looksLikeTorrentScreen\(card\) \|\| looksLikePersonCard\(card\)/);
   assert.match(source, /download\(item\.element, item\.contentType \|\| '', item\.card \|\| null\)/);
@@ -73,7 +78,10 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /function episodeOnlyMetaCard/);
   assert.match(source, /usableMetaCard\(item\.metadata, libraryType\)/);
   assert.match(source, /savedMeta && savedMeta\.card && !savedMeta\.hint/);
-  assert.match(source, /group\.meta && group\.meta\.card && !group\.meta\.hint\) return done\(group\)/);
+  assert.match(source, /metadataOrigin\(card\) === 'torrent-title-hint'/);
+  assert.match(source, /function cardIdentity/);
+  assert.match(source, /function loadExactMetadata/);
+  assert.match(source, /Lampa\.Api\.full/);
   assert.match(source, /function bestSearchCard/);
   assert.match(source, /function normalizeSearchGroups/);
   assert.match(source, /function searchTmdb/);
@@ -111,6 +119,110 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /qbit_media_no_folder:\s*\{ ru: 'Без папки'/);
   assert.match(source, /qbit_media_bridge_url', 'input', '', 'http:\/\/192\.168\.1\.149:8787'/);
   assert.match(source, /qbit_media_bridge_token', 'input', '', ''/);
+});
+
+test('downloader sends the exact full-card composite identity instead of scanning torrent UI objects', async () => {
+  const listeners = {};
+  const requests = [];
+  let active = null;
+  const Lampa = {
+    Storage: { field: () => undefined },
+    Listener: { follow: (name, callback) => { listeners[name] = callback; } },
+    Lang: { add: () => {}, translate: (key) => key },
+    SettingsApi: { addComponent: () => {}, addParam: () => {} },
+    Activity: { active: () => active },
+    Select: {
+      show: (params) => {
+        if (params.onSelect) params.onSelect(params.items[0]);
+      }
+    }
+  };
+  const window = { appready: true };
+  vm.runInNewContext(pluginSource(), {
+    window,
+    Lampa,
+    URLSearchParams,
+    fetch: async (url, options) => {
+      requests.push({ url, payload: JSON.parse(options.body) });
+      return { ok: true, text: async () => '{"ok":true}' };
+    }
+  });
+
+  const card = {
+    id: 1020047,
+    title: 'Кодекс Данте',
+    original_title: 'In the Hand of Dante',
+    release_date: '2026-06-12',
+    poster_path: '/dante.jpg',
+    media_type: 'movie',
+    source: 'cub'
+  };
+  active = null;
+  listeners.full({ type: 'complite', data: { movie: card }, object: { card } });
+  const event = {
+    type: 'onlong',
+    element: { MagnetUri: 'magnet:?xt=urn:btih:dante', Title: 'In.the.Hand.of.Dante.2026.2160p' },
+    item: { title: 'wrong-ui-object', description: 'must not be scanned' },
+    menu: []
+  };
+  listeners.torrent(event);
+  Lampa.Select.show({ items: event.menu });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].payload.identity.id, 1020047);
+  assert.equal(requests[0].payload.identity.media_type, 'movie');
+  assert.equal(requests[0].payload.identity.source, 'cub');
+  assert.equal(requests[0].payload.identity.key, 'cub:movie:1020047');
+  assert.equal(requests[0].payload.metadata.title, 'Кодекс Данте');
+  assert.equal(requests[0].payload.metadata.provider, 'cub');
+  assert.equal(requests[0].payload.metadata.origin, 'lampa-card');
+});
+
+test('media plugin treats torrent title as a hint and resolves an exact card through Lampa Api.full', async () => {
+  const calls = [];
+  const stored = new Map();
+  const window = { appready: false, __LAMPA_QBIT_TEST__: true };
+  const Lampa = {
+    Listener: { follow: () => {} },
+    Storage: {
+      get: (key, fallback) => stored.has(key) ? stored.get(key) : fallback,
+      set: (key, value) => stored.set(key, value)
+    },
+    Api: {
+      full: (params, success) => {
+        calls.push(params);
+        success({
+          movie: {
+            id: params.id,
+            title: 'Кодекс Данте',
+            original_title: 'In the Hand of Dante',
+            release_date: '2026-06-12',
+            poster_path: '/dante.jpg',
+            source: params.source
+          }
+        });
+      }
+    }
+  };
+  vm.runInNewContext(pluginSource('lampa-qbit-media.js'), { window, Lampa });
+  const hooks = window.__lampaQbitMediaTest;
+  const hint = {
+    title: 'Кодекс Данте',
+    media_type: 'movie',
+    origin: 'torrent-title-hint',
+    card_identity: { id: 1020047, source: 'cub', media_type: 'movie', key: 'cub:movie:1020047' }
+  };
+  assert.equal(hooks.usableMetaCard(hint, 'movie'), false);
+
+  const group = { title: 'Кодекс Данте', libraryType: 'movie', meta: { card: hint, identity: hooks.cardIdentity(hint, 'movie'), hint: true } };
+  await new Promise((resolve) => hooks.loadMetadata(group, resolve));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].id, 1020047);
+  assert.equal(calls[0].source, 'cub');
+  assert.equal(calls[0].method, 'movie');
+  assert.equal(group.meta.card.poster_path, '/dante.jpg');
+  assert.equal(group.meta.identity.key, 'cub:movie:1020047');
 });
 
 test('GETS TV online plugin is separate from qBittorrent downloader and uses bridge playback API', () => {

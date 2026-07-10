@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Capture the exact Lampa full-card identity as `source:media:id` instead of recursively scanning torrent UI objects.
+- Preserve TMDB/CUB provider separately from metadata origin.
+- Bind metadata records to qBittorrent tasks with unique `lampa-meta-*` tags and exact content paths.
+- Resolve downloaded cards directly through `Lampa.Api.full`; title-only torrent hints are fallback search input, not final cards.
+- Require a durable metadata/content-path binding before completed-task auto-removal.
+- Add behavioral regression coverage for exact card capture, exact card loading, and path-scoped metadata isolation.
+
 ## v0.2.1 - 2026-07-08
 
 Hotfix for downloaded-series metadata leakage.

@@ -28,11 +28,21 @@ const config = {
   qbitBinary: env.QBIT_BINARY || '/Applications/qBittorrent.app/Contents/MacOS/qbittorrent',
   downloadRoots: parseRoots(env.LAMPA_DOWNLOAD_ROOTS || ''),
   mediaStreamBufferBytes: parsePositiveInteger(env.LAMPA_MEDIA_STREAM_BUFFER_BYTES, 4 * 1024 * 1024),
+  autoRemoveCompleted: env.LAMPA_AUTO_REMOVE_COMPLETED === 'true',
+  autoRemoveIntervalMs: parsePositiveInteger(env.LAMPA_AUTO_REMOVE_INTERVAL_MS, 15000),
+  autoRemoveGraceSeconds: parseNonNegativeInteger(env.LAMPA_AUTO_REMOVE_GRACE_SECONDS, 30),
+  metadataSyncIntervalMs: parsePositiveInteger(env.LAMPA_METADATA_SYNC_INTERVAL_MS, 5000),
   metadataPath: env.LAMPA_METADATA_PATH || path.join(__dirname, '.lampa-metadata.json')
 };
 
 let sid = '';
 let getstvClient = null;
+let autoRemoveInFlight = false;
+let autoRemoveLastError = '';
+let autoRemoveLastErrorAt = 0;
+let metadataSyncInFlight = false;
+let metadataSyncLastError = '';
+let metadataSyncLastErrorAt = 0;
 
 function trimRight(value) {
   return String(value).replace(/\/+$/, '');
@@ -48,6 +58,11 @@ function parseRoots(value) {
 function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInteger(value, fallback) {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function defaultDownloadRoots() {
@@ -244,13 +259,13 @@ function metadataTitleMatchesHint(metadata, hint) {
 }
 
 function weakLampaCardMetadata(metadata, hint) {
-  if (!metadata || metadata.source !== 'lampa-card') return false;
+  if (!metadata || (metadata.origin !== 'lampa-card' && metadata.source !== 'lampa-card')) return false;
   if (metadataHasMediaSignal(metadata)) return false;
   return !metadataTitleMatchesHint(metadata, hint);
 }
 
 function metadataStoreTemplate() {
-  return { version: 1, records: [] };
+  return { version: 2, records: [] };
 }
 
 function readMetadataStore() {
@@ -265,6 +280,7 @@ function readMetadataStore() {
 }
 
 function writeMetadataStore(store) {
+  store.version = 2;
   fs.writeFileSync(config.metadataPath, JSON.stringify(store, null, 2));
 }
 
@@ -287,7 +303,9 @@ function sanitizeCardMetadata(metadata, titleHint) {
     'vote_average',
     'overview',
     'media_type',
-    'source'
+    'source',
+    'provider',
+    'origin'
   ].forEach((key) => {
     if (metadata[key] !== undefined && metadata[key] !== null && metadata[key] !== '') {
       clean[key] = typeof metadata[key] === 'number' ? metadata[key] : safeString(metadata[key], key === 'overview' ? 1200 : 500);
@@ -307,22 +325,53 @@ function metadataTitles(record) {
   return titles.flatMap((item) => titleVariants(item)).filter(Boolean);
 }
 
-function saveMetadataRecord(payload) {
+function sanitizeCardIdentity(identity, metadata, payload) {
+  const source = safeString(identity && (identity.source || identity.provider) || metadata && metadata.provider, 30).toLowerCase();
+  const idValue = identity && (identity.id || identity.tmdb_id || identity.movie_id) || metadata && metadata.id;
+  const id = typeof idValue === 'number' ? idValue : safeString(idValue, 80);
+  const mediaType = routedContentType({
+    contentType: identity && (identity.media_type || identity.mediaType || identity.type) || metadata && metadata.media_type || payload && payload.contentType
+  });
+  if (!id || !mediaType || !source || !/^[a-z0-9_-]{2,30}$/.test(source)) return null;
+  return {
+    id,
+    media_type: mediaType,
+    source,
+    key: `${source}:${mediaType}:${id}`
+  };
+}
+
+function mergeTags(...values) {
+  return [...new Set(values.flatMap((value) => String(value || '').split(',')).map((value) => value.trim()).filter(Boolean))].join(',');
+}
+
+function prepareMetadataRecord(payload) {
   const titleHint = cleanMetadataHintTitle(payload.title) || safeString(payload.title, 500);
   let metadata = sanitizeCardMetadata(payload.metadata, titleHint || payload.title);
+  const identity = sanitizeCardIdentity(payload.identity, metadata, payload);
+  if (metadata && metadata.source === 'lampa-card' && !metadata.origin) metadata.origin = 'lampa-card';
+  if (identity) {
+    metadata = metadata || {};
+    if (!metadata.id) metadata.id = identity.id;
+    metadata.media_type = identity.media_type;
+    metadata.provider = identity.source;
+    metadata.origin = metadata.origin || 'lampa-card';
+  }
   if (!metadata && titleHint) {
     metadata = {
       title: titleHint,
       media_type: routedContentType(payload) || safeString(payload.contentType, 50),
-      source: 'torrent-title-hint'
+      source: 'torrent-title-hint',
+      origin: 'torrent-title-hint'
     };
   }
-  if (!metadata) return false;
+  if (!metadata) return null;
 
-  const store = readMetadataStore();
   const link = payload.link || payload.url || payload.magnet || '';
+  const id = sha1([link, payload.title, Date.now(), crypto.randomBytes(6).toString('hex')].join('|'));
+  const tag = `lampa-meta-${id.slice(0, 16)}`;
   const record = {
-    id: sha1([link, payload.title, Date.now()].join('|')),
+    id,
     addedAt: new Date().toISOString(),
     linkFingerprint: sha1(link),
     title: safeString(payload.title || metadata.title || metadata.name || metadata.original_title || metadata.original_name, 500),
@@ -330,26 +379,71 @@ function saveMetadataRecord(payload) {
     contentType: routedContentType(payload) || safeString(metadata.media_type, 50),
     savePath: safeString(routedSavePath(payload), 1000),
     category: safeString(routedCategory(payload), 200),
-    metadata
+    identity,
+    metadata,
+    binding: {
+      tag,
+      hash: '',
+      name: '',
+      contentPath: '',
+      savePath: '',
+      files: [],
+      boundAt: ''
+    }
   };
 
+  return record;
+}
+
+function appendMetadataRecord(record) {
+  if (!record) return false;
+  const store = readMetadataStore();
   store.records = [record].concat(store.records || []).slice(0, 500);
   writeMetadataStore(store);
   return true;
 }
 
 function metadataFromRecord(record) {
-  const metadata = record && record.metadata ? { ...record.metadata } : {};
-  if (!genericMetadataTitle(metadata) && !weakLampaCardMetadata(metadata, record && record.title)) return metadata;
-  return {
-    title: cleanMetadataHintTitle(record && record.title) || safeString(record && record.title, 500),
-    media_type: safeString((record && record.contentType) || metadata.media_type, 50),
-    source: 'torrent-title-hint'
-  };
+  let metadata = record && record.metadata ? { ...record.metadata } : {};
+  if (genericMetadataTitle(metadata) || weakLampaCardMetadata(metadata, record && record.title)) {
+    metadata = {
+      title: cleanMetadataHintTitle(record && record.title) || safeString(record && record.title, 500),
+      media_type: safeString((record && record.contentType) || metadata.media_type, 50),
+      source: 'torrent-title-hint',
+      origin: 'torrent-title-hint'
+    };
+  }
+
+  const identity = sanitizeCardIdentity(record && (record.identity || record.cardIdentity), metadata, record || {});
+  if (identity) {
+    metadata.id = identity.id;
+    metadata.media_type = identity.media_type;
+    metadata.provider = identity.source;
+    metadata.card_identity = identity;
+  }
+  if (!metadata.origin && metadata.source) metadata.origin = metadata.source;
+  return metadata;
 }
 
-function metadataForDownloadItem(item) {
+function bindingMatchesFile(record, filePath) {
+  const binding = record && record.binding;
+  if (!binding || !filePath) return false;
+  const resolvedFile = path.resolve(filePath);
+  if ((binding.files || []).some((candidate) => candidate && path.resolve(candidate) === resolvedFile)) return true;
+  if (!binding.contentPath) return false;
+  const contentPath = path.resolve(binding.contentPath);
+  if (contentPath === resolvedFile) return true;
+  return pathIsInsideRoot(contentPath, resolvedFile);
+}
+
+function metadataForDownloadItem(item, filePath) {
   const store = readMetadataStore();
+  const exact = (store.records || []).find((record) => {
+    if (record.contentType && item.type && record.contentType !== item.type) return false;
+    return bindingMatchesFile(record, filePath);
+  });
+  if (exact) return metadataFromRecord(exact);
+
   const haystack = normalizeTitle([item.folder, item.name].filter(Boolean).join(' '));
   if (!haystack) return null;
   const haystackVariants = titleVariants(haystack);
@@ -440,7 +534,7 @@ function walkVideoFiles(root, rootIndex, roots, results, depth = 0) {
       type: rootType(roots[rootIndex]),
       streamUrl: `/media/${encodeURIComponent(id)}`
     };
-    const metadata = metadataForDownloadItem(item);
+    const metadata = metadataForDownloadItem(item, fullPath);
     if (metadata) item.metadata = metadata;
     results.push(item);
   }
@@ -695,6 +789,220 @@ async function qbitStatus() {
   return text.trim();
 }
 
+async function qbitApiRequest(endpoint, options = {}, retry = true) {
+  if (!sid && config.username && config.password) await qbitLogin();
+
+  const headers = {
+    Referer: config.qbitUrl,
+    ...(options.headers || {})
+  };
+  if (sid) headers.Cookie = sid;
+
+  const response = await fetch(config.qbitUrl + endpoint, { ...options, headers });
+  if (response.status === 403 && retry && config.username && config.password) {
+    sid = '';
+    return qbitApiRequest(endpoint, options, false);
+  }
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `qBittorrent API returned ${response.status}`);
+  }
+  return response;
+}
+
+function torrentTagList(torrent) {
+  return String(torrent && torrent.tags || '').split(',').map((tag) => tag.trim()).filter(Boolean);
+}
+
+function safeBoundFiles(torrent, files) {
+  const savePath = safeString(torrent && torrent.save_path, 1000);
+  if (!savePath) return [];
+  const roots = defaultDownloadRoots();
+  return (files || []).map((file) => safeString(file && file.name, 1000)).filter(Boolean).map((name) => path.resolve(savePath, name)).filter((filePath) => (
+    roots.some((root) => pathIsInsideRoot(root, filePath))
+  ));
+}
+
+async function reconcileMetadataBindings(torrentsInput) {
+  if (metadataSyncInFlight) return 0;
+  metadataSyncInFlight = true;
+  try {
+    let torrents = torrentsInput;
+    if (!Array.isArray(torrents)) {
+      const response = await qbitApiRequest('/api/v2/torrents/info?filter=all');
+      torrents = await response.json();
+    }
+    if (!Array.isArray(torrents) || !torrents.length) return 0;
+
+    const snapshot = readMetadataStore();
+    const updates = [];
+    for (const record of snapshot.records || []) {
+      const binding = record && record.binding;
+      if (!binding || (!binding.tag && !binding.hash)) continue;
+      const torrent = torrents.find((candidate) => (
+        (binding.tag && torrentTagList(candidate).includes(binding.tag)) ||
+        (binding.hash && candidate.hash === binding.hash)
+      ));
+      if (!torrent) continue;
+
+      let files = [];
+      if (torrent.hash) {
+        try {
+          const response = await qbitApiRequest('/api/v2/torrents/files?hash=' + encodeURIComponent(torrent.hash));
+          files = safeBoundFiles(torrent, await response.json());
+        } catch (_) {}
+      }
+      if (!files.length && torrent.content_path && fs.existsSync(torrent.content_path)) {
+        const stat = fs.statSync(torrent.content_path);
+        if (stat.isFile()) files = [path.resolve(torrent.content_path)];
+      }
+
+      updates.push({
+        id: record.id,
+        binding: {
+          ...binding,
+          hash: safeString(torrent.hash, 128),
+          name: safeString(torrent.name, 500),
+          contentPath: safeString(torrent.content_path, 1000),
+          savePath: safeString(torrent.save_path, 1000),
+          files,
+          state: safeString(torrent.state, 100),
+          progress: Number(torrent.progress || 0),
+          boundAt: binding.boundAt || new Date().toISOString()
+        }
+      });
+    }
+
+    if (!updates.length) return 0;
+    const current = readMetadataStore();
+    updates.forEach((update) => {
+      const record = (current.records || []).find((candidate) => candidate.id === update.id);
+      if (record) record.binding = update.binding;
+    });
+    writeMetadataStore(current);
+    metadataSyncLastError = '';
+    metadataSyncLastErrorAt = 0;
+    return updates.length;
+  } finally {
+    metadataSyncInFlight = false;
+  }
+}
+
+function runMetadataSyncCheck() {
+  reconcileMetadataBindings().catch((error) => {
+    const message = String(error && error.message ? error.message : error);
+    const now = Date.now();
+    if (message !== metadataSyncLastError || (now - metadataSyncLastErrorAt) >= 300000) {
+      console.error(`[metadata-sync] ${message}`);
+      metadataSyncLastError = message;
+      metadataSyncLastErrorAt = now;
+    }
+  });
+}
+
+function startMetadataSyncLoop() {
+  const initial = setTimeout(runMetadataSyncCheck, 500);
+  initial.unref();
+  const interval = setInterval(runMetadataSyncCheck, config.metadataSyncIntervalMs);
+  interval.unref();
+}
+
+function pathIsInsideRoot(root, candidate) {
+  if (!root || !candidate) return false;
+  const resolvedRoot = path.resolve(root);
+  const relative = path.relative(resolvedRoot, path.resolve(candidate));
+  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function torrentHasMetadataBinding(torrent, store) {
+  const hash = safeString(torrent && torrent.hash, 128);
+  const contentPath = safeString(torrent && torrent.content_path, 1000);
+  return (store.records || []).some((record) => {
+    const binding = record && record.binding;
+    if (!binding) return false;
+    if (hash && binding.hash && binding.hash === hash) return true;
+    return contentPath && binding.contentPath && path.resolve(binding.contentPath) === path.resolve(contentPath);
+  });
+}
+
+function autoRemoveRootForTorrent(torrent) {
+  if (torrent.category === config.moviesCategory) return config.moviesPath;
+  if (torrent.category === config.tvCategory) return config.tvPath;
+  return '';
+}
+
+function isSafeCompletedLampaTorrent(torrent, nowSeconds) {
+  const root = autoRemoveRootForTorrent(torrent);
+  const contentPath = String(torrent.content_path || '');
+  const completionOn = Number(torrent.completion_on || 0);
+  const state = String(torrent.state || '').toLowerCase();
+  const hash = String(torrent.hash || '');
+
+  if (!root || !/^[a-f0-9]{40,64}$/i.test(hash)) return false;
+  if (Number(torrent.progress) < 1 || Number(torrent.amount_left) > 0) return false;
+  if (completionOn <= 0 || (nowSeconds - completionOn) < config.autoRemoveGraceSeconds) return false;
+  if (/checking|moving|allocating|metadl|downloading|queueddl|forceddl|stalleddl/.test(state)) return false;
+  if (!pathIsInsideRoot(root, contentPath) || !fs.existsSync(contentPath)) return false;
+  return true;
+}
+
+async function autoRemoveCompletedLampaTorrents() {
+  if (!config.autoRemoveCompleted || autoRemoveInFlight) return 0;
+  autoRemoveInFlight = true;
+
+  try {
+    const response = await qbitApiRequest('/api/v2/torrents/info?filter=completed');
+    const torrents = await response.json();
+    await reconcileMetadataBindings(torrents);
+    const metadataStore = readMetadataStore();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const candidates = Array.isArray(torrents)
+      ? torrents.filter((torrent) => (
+        isSafeCompletedLampaTorrent(torrent, nowSeconds) && torrentHasMetadataBinding(torrent, metadataStore)
+      ))
+      : [];
+
+    if (!candidates.length) return 0;
+
+    const body = new URLSearchParams();
+    body.set('hashes', candidates.map((torrent) => torrent.hash).join('|'));
+    body.set('deleteFiles', 'false');
+    await qbitApiRequest('/api/v2/torrents/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body
+    });
+
+    console.log(`[auto-remove] removed ${candidates.length} completed Lampa torrent task(s); media kept`);
+    autoRemoveLastError = '';
+    autoRemoveLastErrorAt = 0;
+    return candidates.length;
+  } finally {
+    autoRemoveInFlight = false;
+  }
+}
+
+function runAutoRemoveCheck() {
+  autoRemoveCompletedLampaTorrents().catch((error) => {
+    const message = String(error && error.message ? error.message : error);
+    const now = Date.now();
+    if (message !== autoRemoveLastError || (now - autoRemoveLastErrorAt) >= 300000) {
+      console.error(`[auto-remove] ${message}`);
+      autoRemoveLastError = message;
+      autoRemoveLastErrorAt = now;
+    }
+  });
+}
+
+function startAutoRemoveLoop() {
+  if (!config.autoRemoveCompleted) return;
+  console.log(`[auto-remove] enabled for categories ${config.moviesCategory}, ${config.tvCategory}; media files are preserved`);
+  const initial = setTimeout(runAutoRemoveCheck, Math.min(config.autoRemoveIntervalMs, 1000));
+  initial.unref();
+  const interval = setInterval(runAutoRemoveCheck, config.autoRemoveIntervalMs);
+  interval.unref();
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     return send(res, 204, {});
@@ -776,8 +1084,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/add') {
       if (!isAuthorized(req, url)) return send(res, 401, { ok: false, error: 'Unauthorized' });
       const payload = await readJson(req);
-      const result = await qbitAdd(payload);
-      saveMetadataRecord(payload);
+      const record = prepareMetadataRecord(payload);
+      const addPayload = record
+        ? { ...payload, tags: mergeTags(payload.tags, config.tags, record.binding.tag) }
+        : payload;
+      const result = await qbitAdd(addPayload);
+      appendMetadataRecord(record);
+      if (record) {
+        const sync = setTimeout(runMetadataSyncCheck, 250);
+        sync.unref();
+      }
       return send(res, 200, result);
     }
 
@@ -791,6 +1107,8 @@ server.listen(config.port, config.host, () => {
   console.log(`Lampa qBittorrent bridge: http://${config.host}:${config.port}`);
   console.log(`qBittorrent Web API: ${config.qbitUrl}`);
   console.log(`Bridge auth: ${config.bridgeToken ? 'enabled' : 'disabled'}`);
+  startMetadataSyncLoop();
+  startAutoRemoveLoop();
 });
 
 server.on('error', (error) => {
