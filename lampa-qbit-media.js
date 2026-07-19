@@ -3,6 +3,7 @@
 
   var PLUGIN_ID = 'lampa_qbit_media';
   var COMPONENT_ID = 'qbit_media_library';
+  var CONTROLLER_ID = 'content';
   var MENU_ACTION = 'qbit_media_downloads';
   var CARD_BUTTON_CLASS = 'qbit-media-card-button';
 
@@ -144,7 +145,7 @@
       try {
         var active = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
         if (active && active.component === COMPONENT_ID && Lampa.Controller && Lampa.Controller.toggle) {
-          Lampa.Controller.toggle(COMPONENT_ID);
+          Lampa.Controller.toggle(CONTROLLER_ID);
         }
       } catch (error) {}
     }, 0);
@@ -831,7 +832,7 @@
     };
 
     this.start = function () {
-      Lampa.Controller.add(COMPONENT_ID, {
+      Lampa.Controller.add(CONTROLLER_ID, {
         link: self,
         toggle: function () {
           Lampa.Controller.collectionSet(scroll.render());
@@ -855,7 +856,7 @@
           }
         }
       });
-      Lampa.Controller.toggle(COMPONENT_ID);
+      Lampa.Controller.toggle(CONTROLLER_ID);
     };
 
     this.focusItem = function (node) {
@@ -1215,9 +1216,6 @@
     var item = $('<li class="menu__item selector" data-action="' + MENU_ACTION + '"><div class="menu__ico">' + icon + '</div><div class="menu__text">' + Lampa.Lang.translate('qbit_media_open_downloads') + '</div></li>');
     item.on('hover:enter', function () {
       openLibrary();
-    });
-    item.on('hover:right', function () {
-      restoreMediaController();
     });
     body.find('.menu__list:eq(0)').append(item);
   }

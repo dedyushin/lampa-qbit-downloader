@@ -66,6 +66,8 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /libraryType === 'movie' \? \(folder \|\| item\.id \|\| item\.name\)/);
   assert.match(source, /function mediaLibraryComponent/);
   assert.match(source, /Lampa\.Component\.add\(COMPONENT_ID, mediaLibraryComponent\)/);
+  assert.match(source, /CONTROLLER_ID = 'content'/);
+  assert.match(source, /Lampa\.Controller\.add\(CONTROLLER_ID,/);
   assert.match(source, /function openCardDownloads/);
   assert.match(source, /function addCardButton/);
   assert.match(source, /Lampa\.Listener\.follow\('full', addCardButton\)/);
@@ -100,7 +102,7 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /categoryPosterHtml\(library, title\)/);
   assert.match(source, /function openLampaCard/);
   assert.match(source, /function restoreMediaController/);
-  assert.match(source, /Lampa\.Controller\.toggle\(COMPONENT_ID\)/);
+  assert.match(source, /Lampa\.Controller\.toggle\(CONTROLLER_ID\)/);
   assert.match(source, /restoreMediaController\(\)/);
   assert.match(source, /onBack:\s*function \(\) \{\s*restoreMediaController\(\);\s*\}/);
   assert.match(source, /function watchKey/);
@@ -114,7 +116,7 @@ test('separate media plugin exposes downloaded files browser actions', () => {
   assert.match(source, /sameVisualRow\(active, candidate\) && candidate\.centerX < active\.centerX - 5/);
   assert.match(source, /if \(!target\) return false;/);
   assert.match(source, /Lampa\.Controller\.toggle\('menu'\)/);
-  assert.match(source, /item\.on\('hover:right', function \(\) \{\s*restoreMediaController\(\);\s*\}\);/);
+  assert.doesNotMatch(source, /item\.on\('hover:right'/);
   assert.match(source, /qbit_media_files:\s*\{ ru: 'файлов'/);
   assert.match(source, /qbit_media_no_folder:\s*\{ ru: 'Без папки'/);
   assert.match(source, /qbit_media_bridge_url', 'input', '', 'http:\/\/192\.168\.1\.149:8787'/);
