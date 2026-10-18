@@ -124,8 +124,37 @@
     return snapshot;
   }
 
+  function contextDiagnostic(event, extra) {
+    // Temporary shape-only probe: no titles, torrent URLs, IDs, storage or
+    // credentials. Remove after the real TV navigation contract is observed.
+    try {
+      if (Date.now() > 1792341025738 || contextDiagnostic.count >= 12) return;
+      contextDiagnostic.count = (contextDiagnostic.count || 0) + 1;
+      function shape(value, depth) {
+        if (value === null) return 'null';
+        if (typeof value !== 'object') return typeof value;
+        if (depth <= 0) return Array.isArray(value) ? 'array' : 'object';
+        var out = {};
+        Object.keys(value).slice(0, 45).forEach(function (key) {
+          var v;
+          try { v = value[key]; } catch (e) { return; }
+          out[key] = /^(component|source|provider|method|type)$/.test(key) && typeof v === 'string' && /^[a-z_]{1,32}$/.test(v) ? v : shape(v, depth - 1);
+        });
+        return out;
+      }
+      var active = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
+      fetch('http://192.168.1.149:18790/shape', {
+        method: 'POST', headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ build: 'Q4-shapes', event: event,
+          active: shape(active, 3), extra: shape(extra, 3),
+          owner: shape(active && active.activity && active.activity.object, 2) })
+      }).catch(function () {});
+    } catch (error) {}
+  }
+
   function captureFullContext(event) {
     if (!event || (event.type !== 'start' && event.type !== 'complite')) return;
+    contextDiagnostic('full-' + event.type, event);
     var owner = event.object;
     if (!owner || owner.component !== 'full') return;
     var snapshot = cardSnapshot(event.data && event.data.movie, owner);
@@ -141,6 +170,7 @@
       // so a subsequent standalone search cannot inherit an older card.
       try {
         if (object && object.component === 'torrents') {
+          contextDiagnostic('push-torrents', object);
           var current = Lampa.Activity.active && Lampa.Activity.active();
           if (current && current.component === 'full') {
             var snapshot = current[CARD_CONTEXT] || cardSnapshot(current.card, current);
@@ -325,8 +355,9 @@
     var sourceCard = card;
     var identity = identityFromCard(sourceCard, element, type);
     if (!identity || !looksLikeContentCard(sourceCard)) {
+      contextDiagnostic('missing-card', sourceCard);
       var reason = !sourceCard ? 'card' : !sourceCard.id ? 'id' : !sourceCard.provider ? 'source' : 'type';
-      return notify('Не удалось сохранить карточку сериала/фильма [Q3-' + reason + ']. Загрузка не отправлена. Сообщите этот код для проверки.');
+      return notify('Не удалось сохранить карточку сериала/фильма [Q4-' + reason + ']. Загрузка не отправлена. Сообщите этот код для проверки.');
     }
     var sourceType = contentTypeFromObject(sourceCard);
     if (sourceType && sourceType !== type) {
@@ -427,6 +458,7 @@
   function addMenuHook() {
     Lampa.Listener.follow('torrent', function (event) {
       if (event.type !== 'onlong' || !event.menu || !torrentLink(event.element)) return;
+      contextDiagnostic('torrent-onlong', event);
       var sourceCard = activeCard();
       event.menu.unshift({
         title: Lampa.Lang.translate('qbit_download_menu_movie'),

@@ -145,6 +145,7 @@ test('downloader sends the exact full-card composite identity instead of scannin
     Lampa,
     URLSearchParams,
     fetch: async (url, options) => {
+      if (url.endsWith('/shape')) return { ok: true, text: async () => '' };
       requests.push({ url, payload: JSON.parse(options.body) });
       return { ok: true, text: async () => '{"ok":true}' };
     }
@@ -197,6 +198,7 @@ function downloaderHarness() {
   vm.runInNewContext(pluginSource(), {
     window: { appready: true }, Lampa, URLSearchParams,
     fetch: async (url, options) => {
+      if (url.endsWith('/shape')) return { ok: true, text: async () => '' };
       requests.push({ url, payload: JSON.parse(options.body) });
       return { ok: true, text: async () => '{"ok":true}' };
     }
