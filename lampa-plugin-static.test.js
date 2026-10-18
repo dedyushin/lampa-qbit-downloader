@@ -145,7 +145,6 @@ test('downloader sends the exact full-card composite identity instead of scannin
     Lampa,
     URLSearchParams,
     fetch: async (url, options) => {
-      if (url.endsWith('/shape')) return { ok: true, text: async () => '' };
       requests.push({ url, payload: JSON.parse(options.body) });
       return { ok: true, text: async () => '{"ok":true}' };
     }
@@ -198,7 +197,6 @@ function downloaderHarness() {
   vm.runInNewContext(pluginSource(), {
     window: { appready: true }, Lampa, URLSearchParams,
     fetch: async (url, options) => {
-      if (url.endsWith('/shape')) return { ok: true, text: async () => '' };
       requests.push({ url, payload: JSON.parse(options.body) });
       return { ok: true, text: async () => '{"ok":true}' };
     }
@@ -228,6 +226,31 @@ test('downloader must not reuse a previous full card for a standalone torrent se
   h.setActive({ component: 'torrents', title: 'Торренты', search: 'Холод' });
   h.send();
   assert.equal(h.requests.length, 0, 'global lastFullCard is not evidence for current torrent');
+});
+
+test('real TV card URL is catalog metadata, not a torrent link', () => {
+  for (const url of ['tv/12345', 'https://catalog.example/3/tv/12345']) {
+    const h = downloaderHarness();
+    const movie = { id: 12345, name: 'Fixture series', original_name: 'Fixture series', first_air_date: '2026-01-01', poster_path: '/fixture.jpg', url };
+    const full = { component: 'full', id: '12345', source: 'cub', method: 'tv', card: movie };
+    h.setActive(full);
+    h.listeners.full({ type: 'complite', object: full, data: { movie } });
+    h.push({ component: 'torrents', movie });
+    h.send();
+    assert.equal(h.requests.length, 1, 'catalog url must not discard a valid card');
+    assert.equal(h.requests[0].payload.identity.key, 'cub:tv:12345');
+    assert.equal(h.requests[0].payload.metadata.poster_path, '/fixture.jpg');
+    assert.equal(h.requests[0].payload.metadata.url, undefined, 'catalog URL is not sent as metadata');
+  }
+});
+
+test('explicit torrent links are still not accepted as content cards', () => {
+  for (const link of ['magnet:?xt=urn:btih:fixture', 'https://tracker.example/release.torrent']) {
+    const h = downloaderHarness();
+    h.setActive({ component: 'torrents', movie: { id: 123, title: 'Fixture', source: 'cub', media_type: 'tv', poster_path: '/fixture.jpg', url: link } });
+    h.send();
+    assert.equal(h.requests.length, 0);
+  }
 });
 
 test('watch-menu transition preserves the full card even if the parser receives only search fields', () => {
