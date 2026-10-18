@@ -190,7 +190,7 @@ function downloaderHarness() {
     Listener: { follow: (name, callback) => { listeners[name] = callback; } },
     Lang: { add: () => {}, translate: key => key },
     SettingsApi: { addComponent: () => {}, addParam: () => {} },
-    Activity: { active: () => active },
+    Activity: { active: () => active, push: object => { active = object; return object; } },
     Noty: { show: text => notices.push(text) },
     Select: { show: params => { menu = params; } }
   };
@@ -202,7 +202,7 @@ function downloaderHarness() {
     }
   });
   return {
-    listeners, requests, notices, setActive: value => { active = value; },
+    listeners, requests, notices, push: object => Lampa.Activity.push(object), setActive: value => { active = value; },
     send: (type = 'tv') => {
       const event = { type: 'onlong', menu: [], element: { MagnetUri: 'magnet:?xt=urn:btih:test', Title: 'Холод / 2026 / WEB-DL' } };
       listeners.torrent(event);
@@ -226,6 +226,38 @@ test('downloader must not reuse a previous full card for a standalone torrent se
   h.setActive({ component: 'torrents', title: 'Торренты', search: 'Холод' });
   h.send();
   assert.equal(h.requests.length, 0, 'global lastFullCard is not evidence for current torrent');
+});
+
+test('watch-menu transition preserves the full card even if the parser receives only search fields', () => {
+  const h = downloaderHarness();
+  const full = { component: 'full', id: 12345, source: 'tmdb', method: 'tv', card: { id: 12345, name: 'Холод', first_air_date: '2026-10-01', poster_path: '/cold.jpg' } };
+  h.setActive(full);
+  const destination = { component: 'torrents', search: 'Холод', movie: { title: 'Холод', original_title: 'Холод' } };
+  h.push(destination);
+  h.send();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].payload.identity.key, 'tmdb:tv:12345');
+  assert.equal(h.requests[0].payload.metadata.poster_path, '/cold.jpg');
+});
+
+test('full event context is owned by its navigation object, not the last opened card', () => {
+  const h = downloaderHarness();
+  const full = { component: 'full', id: 12345, source: 'cub', method: 'tv' };
+  h.setActive(full);
+  if (h.listeners.full) h.listeners.full({ type: 'complite', object: full, data: { movie: { id: 12345, name: 'Холод', first_air_date: '2026-10-01', poster_path: '/cold.jpg' } } });
+  h.push({ component: 'torrents', search: 'Холод' });
+  h.send();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].payload.identity.key, 'cub:tv:12345');
+});
+
+test('watch-menu context does not overwrite a different explicit destination card', () => {
+  const h = downloaderHarness();
+  h.setActive({ component: 'full', id: 12345, source: 'tmdb', card: { id: 12345, name: 'Холод', poster_path: '/cold.jpg', media_type: 'tv' } });
+  h.push({ component: 'torrents', movie: { id: 456, name: 'Другой сериал', source: 'cub', media_type: 'tv', poster_path: '/other.jpg' } });
+  h.send();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].payload.identity.key, 'cub:tv:456');
 });
 
 test('downloader preserves a TV source ID, artwork and year from the current torrent activity', () => {

@@ -3,6 +3,7 @@
 
   var PLUGIN_ID = 'lampa_qbit_download';
   var MENU_FLAG = '__lampa_qbit_download';
+  var CARD_CONTEXT = '__qbit_source_card_v2';
 
   if (window[PLUGIN_ID]) return;
   window[PLUGIN_ID] = true;
@@ -109,17 +110,67 @@
     return '';
   }
 
+  function cardSnapshot(card, owner) {
+    card = knownContentCard(card);
+    if (!card) return null;
+    var snapshot = metadataFromCard(card, null, contentTypeFromObject(card));
+    // The full-screen route owns the catalog source even in builds where
+    // data.movie omits it. Never infer a provider from global preferences.
+    if (snapshot && owner && owner.component === 'full' &&
+        String(owner.id || '') === String(snapshot.id || '') && snapshot.id) {
+      if (!snapshot.provider) snapshot.provider = asLower(owner.source || '');
+      if (/^(tv|movie)$/.test(owner.method || '')) snapshot.media_type = owner.method;
+    }
+    return snapshot;
+  }
+
+  function captureFullContext(event) {
+    if (!event || (event.type !== 'start' && event.type !== 'complite')) return;
+    var owner = event.object;
+    if (!owner || owner.component !== 'full') return;
+    var snapshot = cardSnapshot(event.data && event.data.movie, owner);
+    if (snapshot) owner[CARD_CONTEXT] = snapshot;
+  }
+
+  function patchActivityPush() {
+    if (!Lampa.Activity || typeof Lampa.Activity.push !== 'function') return;
+    var original = Lampa.Activity.push;
+    Lampa.Activity.push = function (object) {
+      // Capture the exact full -> torrents transition BEFORE the parser can
+      // replace movie with search fields. Context belongs to this destination,
+      // so a subsequent standalone search cannot inherit an older card.
+      try {
+        if (object && object.component === 'torrents') {
+          var current = Lampa.Activity.active && Lampa.Activity.active();
+          if (current && current.component === 'full') {
+            var snapshot = current[CARD_CONTEXT] || cardSnapshot(current.card, current);
+            var target = object.movie || object.card;
+            var targetId = target && (target.id || target.tmdb_id || target.movie_id);
+            var targetSource = target && asLower(target.source || target.provider || '');
+            if (snapshot && (!current.id || String(current.id) === String(snapshot.id)) &&
+                (!targetId || String(targetId) === String(snapshot.id)) &&
+                (!targetSource || targetSource === snapshot.provider)) {
+              object[CARD_CONTEXT] = snapshot;
+            }
+          }
+        }
+      } catch (error) {} // Metadata capture must never break Lampa navigation.
+      return original.apply(this, arguments);
+    };
+  }
+
   function activeCard() {
     try {
       var active = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
-      // Upstream full -> torrents carries the source card in active.movie.
-      // Never use the last full screen: standalone torrent searches have no ID.
       if (!active || active.component !== 'torrents') return null;
-      var card = knownContentCard(active.movie) || knownContentCard(active.card);
-      if (!card) return null;
-      // Copy only card fields now; menu selection must not re-read navigation
-      // state or retain a mutable provider card shared with another component.
-      return metadataFromCard(card, null, contentTypeFromObject(card));
+      var direct = cardSnapshot(active.movie) || cardSnapshot(active.card);
+      var scoped = active[CARD_CONTEXT];
+      if (direct && identityFromCard(direct, null, direct.media_type)) return direct;
+      // Only a snapshot attached to THIS navigation transition is eligible.
+      if (scoped && (!direct || !direct.id || String(direct.id) === String(scoped.id))) {
+        return cardSnapshot(scoped);
+      }
+      return direct;
     } catch (error) {
       return null;
     }
@@ -274,7 +325,8 @@
     var sourceCard = card;
     var identity = identityFromCard(sourceCard, element, type);
     if (!identity || !looksLikeContentCard(sourceCard)) {
-      return notify('Загрузка не отправлена: нет точной карточки. Откройте фильм или сериал в Лампе и перейдите в его торренты.');
+      var reason = !sourceCard ? 'card' : !sourceCard.id ? 'id' : !sourceCard.provider ? 'source' : 'type';
+      return notify('Не удалось сохранить карточку сериала/фильма [Q3-' + reason + ']. Загрузка не отправлена. Сообщите этот код для проверки.');
     }
     var sourceType = contentTypeFromObject(sourceCard);
     if (sourceType && sourceType !== type) {
@@ -397,6 +449,8 @@
   }
 
   ready(function () {
+    Lampa.Listener.follow('full', captureFullContext);
+    patchActivityPush();
     addSettings();
     patchSelect();
     addMenuHook();
