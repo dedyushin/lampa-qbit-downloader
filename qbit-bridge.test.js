@@ -109,9 +109,20 @@ async function waitFor(predicate, timeoutMs = 2000) {
 
 async function startBridge(env) {
   const port = await freePort();
+  const isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lampa-bridge-test-'));
   const child = spawn(process.execPath, ['qbit-bridge.js'], {
     cwd: __dirname,
-    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), ...env },
+    // Tests must not scan real media, update the live metadata store, or
+    // fall back to launching the installed qBittorrent application.
+    env: { ...process.env,
+      HOST: '127.0.0.1', PORT: String(port),
+      QBIT_URL: 'http://127.0.0.1:1', QBIT_ADD_MODE: 'webui',
+      QBIT_BINARY: path.join(isolatedRoot, 'no-real-qbittorrent'),
+      QBIT_MOVIES_PATH: path.join(isolatedRoot, 'FILMS'),
+      QBIT_TV_PATH: path.join(isolatedRoot, 'TV'),
+      LAMPA_DOWNLOAD_ROOTS: '', LAMPA_AUTO_REMOVE_COMPLETED: 'false',
+      LAMPA_METADATA_PATH: path.join(isolatedRoot, 'metadata.json'),
+      ...env },
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
@@ -134,9 +145,10 @@ async function startBridge(env) {
     port,
     child,
     stop: () => new Promise((resolve) => {
-      child.once('exit', resolve);
+      const cleanup = () => { fs.rmSync(isolatedRoot, { recursive: true, force: true }); resolve(); };
+      child.once('exit', cleanup);
       child.kill('SIGTERM');
-      setTimeout(resolve, 1000);
+      setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL'); }, 1000).unref();
     })
   };
 }

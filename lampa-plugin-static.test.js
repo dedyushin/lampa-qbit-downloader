@@ -21,7 +21,7 @@ test('main Lampa downloader plugin exposes only explicit movie and TV download m
   assert.match(source, /identity:\s*identityFromCard/);
   assert.match(source, /provider:\s*provider/);
   assert.match(source, /origin:\s*'lampa-card'/);
-  assert.match(source, /Lampa\.Listener\.follow\('full', rememberFullCard\)/);
+  assert.doesNotMatch(source, /lastFullCard|rememberFullCard/);
   assert.match(source, /function looksLikePersonCard/);
   assert.match(source, /looksLikeTorrentScreen\(card\) \|\| looksLikePersonCard\(card\)/);
   assert.match(source, /download\(item\.element, item\.contentType \|\| '', item\.card \|\| null\)/);
@@ -159,8 +159,7 @@ test('downloader sends the exact full-card composite identity instead of scannin
     media_type: 'movie',
     source: 'cub'
   };
-  active = null;
-  listeners.full({ type: 'complite', data: { movie: card }, object: { card } });
+  active = { component: 'torrents', movie: card };
   const event = {
     type: 'onlong',
     element: { MagnetUri: 'magnet:?xt=urn:btih:dante', Title: 'In.the.Hand.of.Dante.2026.2160p' },
@@ -168,6 +167,8 @@ test('downloader sends the exact full-card composite identity instead of scannin
     menu: []
   };
   listeners.torrent(event);
+  active = { component: 'torrents', movie: { ...card, id: 77 } };
+  card.id = 88; // Mutating source objects after opening the menu must not change its snapshot.
   Lampa.Select.show({ items: event.menu });
   await new Promise((resolve) => setImmediate(resolve));
 
@@ -179,6 +180,103 @@ test('downloader sends the exact full-card composite identity instead of scannin
   assert.equal(requests[0].payload.metadata.title, 'Кодекс Данте');
   assert.equal(requests[0].payload.metadata.provider, 'cub');
   assert.equal(requests[0].payload.metadata.origin, 'lampa-card');
+});
+
+function downloaderHarness() {
+  const listeners = {}, requests = [], notices = [];
+  let active = null, menu;
+  const Lampa = {
+    Storage: { field: () => undefined },
+    Listener: { follow: (name, callback) => { listeners[name] = callback; } },
+    Lang: { add: () => {}, translate: key => key },
+    SettingsApi: { addComponent: () => {}, addParam: () => {} },
+    Activity: { active: () => active },
+    Noty: { show: text => notices.push(text) },
+    Select: { show: params => { menu = params; } }
+  };
+  vm.runInNewContext(pluginSource(), {
+    window: { appready: true }, Lampa, URLSearchParams,
+    fetch: async (url, options) => {
+      requests.push({ url, payload: JSON.parse(options.body) });
+      return { ok: true, text: async () => '{"ok":true}' };
+    }
+  });
+  return {
+    listeners, requests, notices, setActive: value => { active = value; },
+    send: (type = 'tv') => {
+      const event = { type: 'onlong', menu: [], element: { MagnetUri: 'magnet:?xt=urn:btih:test', Title: 'Холод / 2026 / WEB-DL' } };
+      listeners.torrent(event);
+      Lampa.Select.show({ items: event.menu });
+      menu.onSelect(event.menu.find(item => item.contentType === type));
+    }
+  };
+}
+
+test('downloader refuses a silent title-only download without a source card', () => {
+  const h = downloaderHarness();
+  h.setActive({ component: 'torrents', title: 'Торренты' });
+  h.send();
+  assert.equal(h.requests.length, 0);
+  assert.ok(h.notices.some(text => /карточк/i.test(text)));
+});
+
+test('downloader must not reuse a previous full card for a standalone torrent search', () => {
+  const h = downloaderHarness();
+  if (h.listeners.full) h.listeners.full({ type: 'complite', data: { movie: { id: 999, title: 'Другой сериал', poster_path: '/old.jpg', source: 'tmdb', media_type: 'tv' } } });
+  h.setActive({ component: 'torrents', title: 'Торренты', search: 'Холод' });
+  h.send();
+  assert.equal(h.requests.length, 0, 'global lastFullCard is not evidence for current torrent');
+});
+
+test('downloader preserves a TV source ID, artwork and year from the current torrent activity', () => {
+  const h = downloaderHarness();
+  h.setActive({ component: 'torrents', movie: { id: 12345, name: 'Холод', original_name: 'Cold', first_air_date: '2026-10-01', poster_path: '/cold.jpg', source: 'tmdb' } });
+  h.send();
+  assert.equal(h.requests.length, 1);
+  const p = h.requests[0].payload;
+  assert.equal(p.identity.key, 'tmdb:tv:12345');
+  assert.equal(p.metadata.poster_path, '/cold.jpg');
+  assert.equal(p.metadata.release_date, '2026-10-01');
+  assert.equal(p.metadata.title, 'Холод');
+});
+
+test('downloader rejects search placeholders, missing providers, people and wrong content type', () => {
+  const cases = [
+    { title: 'Холод', original_title: 'Холод' },
+    { id: 123, name: 'Холод', poster_path: '/cold.jpg', media_type: 'tv' },
+    { id: 123, name: 'Person', profile_path: '/person.jpg', source: 'tmdb', media_type: 'person' },
+    { id: 123, title: 'Film', release_date: '2026-01-01', poster_path: '/film.jpg', source: 'tmdb', media_type: 'movie' }
+  ];
+  cases.forEach(movie => {
+    const h = downloaderHarness();
+    h.setActive({ component: 'torrents', movie });
+    h.send('tv');
+    assert.equal(h.requests.length, 0, JSON.stringify(movie));
+    assert.ok(h.notices.length);
+  });
+});
+
+test('media resolves a saved exact card without artwork even when it has a title', async () => {
+  let fullCalls = 0;
+  const window = { appready: false, __LAMPA_QBIT_TEST__: true };
+  const Lampa = { Listener: { follow: () => {} }, Storage: { get: () => ({}), set: () => {} }, Api: {
+    full: (params, done) => { fullCalls++; done({ movie: { id: params.id, name: 'Холод', poster_path: '/cold.jpg', source: params.source } }); }
+  } };
+  vm.runInNewContext(pluginSource('lampa-qbit-media.js'), { window, Lampa });
+  const group = { title: 'Холод', libraryType: 'tv', meta: { card: { id: 123, title: 'Холод', provider: 'tmdb', media_type: 'tv', origin: 'lampa-card' }, hint: false } };
+  await new Promise(resolve => window.__lampaQbitMediaTest.loadMetadata(group, resolve));
+  assert.equal(fullCalls, 1);
+  assert.equal(group.meta.card.poster_path, '/cold.jpg');
+});
+
+test('media matches known cards by provider, type and ID, never by a namesake title', () => {
+  const window = { appready: false, __LAMPA_QBIT_TEST__: true };
+  vm.runInNewContext(pluginSource('lampa-qbit-media.js'), { window, Lampa: { Listener: { follow: () => {} } } });
+  const group = { title: 'Холод', libraryType: 'tv', files: [{ name: 'Холод', metadata: { id: 123, title: 'Холод', provider: 'tmdb', media_type: 'tv' } }] };
+  const matches = window.__lampaQbitMediaTest.groupMatchesCard;
+  assert.equal(matches(group, { id: 123, name: 'Холод', source: 'tmdb', media_type: 'tv' }), true);
+  assert.equal(matches(group, { id: 456, name: 'Холод', source: 'tmdb', media_type: 'tv' }), false);
+  assert.equal(matches(group, { id: 123, name: 'Холод', source: 'cub', media_type: 'tv' }), false);
 });
 
 test('media plugin treats torrent title as a hint and resolves an exact card through Lampa Api.full', async () => {
@@ -225,6 +323,25 @@ test('media plugin treats torrent title as a hint and resolves an exact card thr
   assert.equal(calls[0].method, 'movie');
   assert.equal(group.meta.card.poster_path, '/dante.jpg');
   assert.equal(group.meta.identity.key, 'cub:movie:1020047');
+});
+
+test('media keeps an exact identity when its provider is unavailable instead of guessing a namesake', async () => {
+  let searches = 0;
+  const window = { appready: false, __LAMPA_QBIT_TEST__: true };
+  const Lampa = {
+    Listener: { follow: () => {} },
+    Storage: { get: () => ({}), set: () => {} },
+    Api: {
+      full: (params, success, fail) => fail(),
+      sources: { tmdb: { search: (params, done) => { searches++; done([]); } } }
+    }
+  };
+  vm.runInNewContext(pluginSource('lampa-qbit-media.js'), { window, Lampa });
+  const identity = { id: 123, source: 'tmdb', media_type: 'tv', key: 'tmdb:tv:123' };
+  const group = { title: 'Холод', libraryType: 'tv', meta: { card: { title: 'Холод', origin: 'torrent-title-hint' }, identity, hint: true } };
+  await new Promise((resolve) => window.__lampaQbitMediaTest.loadMetadata(group, resolve));
+  assert.equal(searches, 0, 'exact identity must not degrade into title search');
+  assert.equal(group.meta.identity.key, identity.key);
 });
 
 test('GETS TV online plugin is separate from qBittorrent downloader and uses bridge playback API', () => {

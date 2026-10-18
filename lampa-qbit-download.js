@@ -3,7 +3,6 @@
 
   var PLUGIN_ID = 'lampa_qbit_download';
   var MENU_FLAG = '__lampa_qbit_download';
-  var lastFullCard = null;
 
   if (window[PLUGIN_ID]) return;
   window[PLUGIN_ID] = true;
@@ -104,7 +103,7 @@
     if (/movie|film|фильм|кино/.test(direct)) return 'movie';
     if (/tv|show|series|serial|episode|сериал|эпизод/.test(direct)) return 'tv';
 
-    if (object.number_of_seasons || object.number_of_episodes || object.season || object.episode || object.Episode || object.Season) return 'tv';
+    if (object.first_air_date || object.original_name || object.number_of_seasons || object.number_of_episodes || object.season || object.episode || object.Episode || object.Season) return 'tv';
     if (object.original_title || object.release_date || object.year || object.Year) return 'movie';
 
     return '';
@@ -113,17 +112,17 @@
   function activeCard() {
     try {
       var active = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
-      var card = knownContentCard(active);
-      return card && !looksLikeTorrentScreen(card) ? card : null;
+      // Upstream full -> torrents carries the source card in active.movie.
+      // Never use the last full screen: standalone torrent searches have no ID.
+      if (!active || active.component !== 'torrents') return null;
+      var card = knownContentCard(active.movie) || knownContentCard(active.card);
+      if (!card) return null;
+      // Copy only card fields now; menu selection must not re-read navigation
+      // state or retain a mutable provider card shared with another component.
+      return metadataFromCard(card, null, contentTypeFromObject(card));
     } catch (error) {
       return null;
     }
-  }
-
-  function rememberFullCard(event) {
-    if (!event || (event.type !== 'start' && event.type !== 'complite')) return;
-    var card = knownContentCard(event);
-    if (card) lastFullCard = card;
   }
 
   function inferContentType(element) {
@@ -272,7 +271,15 @@
   function sendBridge(element, link, contentType, card) {
     var baseUrl = cleanUrl(storage('qbit_download_bridge_url', 'http://192.168.1.149:8787'));
     var type = contentType || inferContentType(element);
-    var sourceCard = knownContentCard(card) || activeCard() || lastFullCard;
+    var sourceCard = card;
+    var identity = identityFromCard(sourceCard, element, type);
+    if (!identity || !looksLikeContentCard(sourceCard)) {
+      return notify('Загрузка не отправлена: нет точной карточки. Откройте фильм или сериал в Лампе и перейдите в его торренты.');
+    }
+    var sourceType = contentTypeFromObject(sourceCard);
+    if (sourceType && sourceType !== type) {
+      return notify('Загрузка не отправлена: тип не совпадает с карточкой. Выберите «Скачать как ' + (sourceType === 'tv' ? 'сериал' : 'фильм') + '».');
+    }
     requestJson(baseUrl + '/add', {
       link: link,
       title: element.title || element.Title || '',
@@ -296,7 +303,7 @@
     var link = torrentLink(element);
     if (!link) return notify('Не нашёл magnet или ссылку .torrent');
 
-    if (storage('qbit_download_mode', 'bridge') === 'direct') sendDirect(element, link);
+    if (storage('qbit_download_mode', 'bridge') === 'direct') notify('Для сохранения карточки нужен режим «Bridge на Mac mini» в настройках qBittorrent загрузки. Загрузка не отправлена.');
     else sendBridge(element, link, contentType, card);
   }
 
@@ -368,7 +375,7 @@
   function addMenuHook() {
     Lampa.Listener.follow('torrent', function (event) {
       if (event.type !== 'onlong' || !event.menu || !torrentLink(event.element)) return;
-      var sourceCard = activeCard() || lastFullCard;
+      var sourceCard = activeCard();
       event.menu.unshift({
         title: Lampa.Lang.translate('qbit_download_menu_movie'),
         subtitle: event.element.Title || event.element.title || '',
@@ -390,7 +397,6 @@
   }
 
   ready(function () {
-    Lampa.Listener.follow('full', rememberFullCard);
     addSettings();
     patchSelect();
     addMenuHook();

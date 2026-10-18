@@ -500,10 +500,14 @@
   }
 
   function loadMetadata(group, done) {
-    if (group.meta && group.meta.card && !group.meta.hint && usableMetaCard(group.meta.card, group.libraryType)) return done(group);
+    var exactIdentity = group.meta && (group.meta.identity || cardIdentity(group.meta.card, group.libraryType));
+    if (group.meta && group.meta.card && !group.meta.hint && usableMetaCard(group.meta.card, group.libraryType) &&
+        (!exactIdentity || group.meta.card.poster_path)) return done(group);
 
     loadExactMetadata(group, function (exactFound) {
-      if (exactFound) return done(group);
+      // A provider outage must never replace a known ID with a namesake.
+      // Keep the saved card/identity and retry the exact lookup next time.
+      if (exactFound || exactIdentity) return done(group);
 
       var query = group.title;
       if (!query || !Lampa.Api) return done(group);
@@ -721,6 +725,17 @@
     if (!group || !card) return false;
     var wantedType = cardContentType(card);
     if (wantedType && group.libraryType && wantedType !== group.libraryType) return false;
+
+    var wantedIdentity = cardIdentity(card, wantedType);
+    var exactIdentities = (group.files || []).map(function (item) {
+      return cardIdentity(item.metadata, group.libraryType);
+    }).filter(Boolean);
+    if (exactIdentities.length) {
+      // Different provider/ID is a different work, even with the same title.
+      return !!wantedIdentity && exactIdentities.some(function (identity) {
+        return identity.key === wantedIdentity.key;
+      });
+    }
 
     var cardId = String(card.id || card.tmdb_id || card.movie_id || '');
     if (cardId) {
@@ -1349,6 +1364,7 @@
   if (window.__LAMPA_QBIT_TEST__) {
     window.__lampaQbitMediaTest = {
       cardIdentity: cardIdentity,
+      groupMatchesCard: groupMatchesCard,
       usableMetaCard: usableMetaCard,
       loadMetadata: loadMetadata
     };
